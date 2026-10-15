@@ -1,0 +1,40 @@
+# Deployment scenarios and budgets. Frozen before champions are designated (M2).
+# Any change requires an amended ADR-002.
+version: 1
+
+reference_workload:
+  series: 150
+  granularity: day
+  horizon_days: 14
+  mode: nightly_batch
+  max_users: 10
+
+scenarios:
+  A:
+    profile: prod-light
+    hardware: { vcpu: 2, ram_gb: 4, gpu: false }
+    inference: { max_batch_minutes: 5, max_peak_ram_gb: 1.5, gpu_allowed: false }
+    api: { p95_latency_ms: 200 }
+    image: { max_size_gb: 1 }
+    training: { cadence: weekly, max_minutes: 30, device: cpu }
+  B:
+    profile: prod-full
+    hardware: { vcpu: 8, ram_gb: 16, gpu: false }
+    inference: { max_batch_minutes: 5, max_peak_ram_gb: 6, gpu_allowed: false }
+    api: { p95_latency_ms: 150 }
+    image: { max_size_gb: 3 }
+    training: { cadence: weekly, max_minutes: 60, device: cpu }
+  C:
+    profile: prod-full
+    hardware: { vcpu: 8, ram_gb: 32, gpu: true, vram_gb: 8 }
+    inference: { max_batch_minutes: 5, max_peak_ram_gb: 12, gpu_allowed: true }
+    api: { p95_latency_ms: 100 }
+    image: { max_size_gb: 10 }
+    training: { cadence: weekly, max_minutes: 60, device: gpu }
+
+rules:
+  budget_overrun_tolerance: 0.20   # overrun below 20% allowed as a documented waiver
+  materiality:
+    negligible_mase_gain: 0.02     # below this, a gain is not material
+    justifies_upgrade_mase_gain: 0.05
+  safety_factor_scenario_a: 1.5    # durations measured on a real VPS in M3
