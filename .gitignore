@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Data: never versioned (reproducible via scripts)
+data/raw/*
+data/interim/*
+data/processed/*
+!data/**/.gitkeep
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# ML artifacts
+mlruns/
+*.ckpt
+*.pt
+*.pkl
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
