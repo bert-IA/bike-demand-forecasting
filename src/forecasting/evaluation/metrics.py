@@ -29,6 +29,19 @@ def _validate_pair(
     return actual, forecast
 
 
+def _seasonal_naive_errors(y_train: ArrayLike, season_length: int) -> NDArray[np.float64]:
+    """Return the seasonal differences of the training series."""
+    if season_length < 1:
+        raise ValueError(f"season_length must be at least 1, got {season_length}")
+    train = _validate_series(y_train, "y_train")
+    if train.size <= season_length:
+        raise ValueError(
+            "y_train needs more than season_length values, "
+            f"got {train.size} with season_length={season_length}"
+        )
+    return train[season_length:] - train[:-season_length]
+
+
 def wape(y_true: ArrayLike, y_pred: ArrayLike) -> float:
     """Weighted absolute percentage error: sum|y - yhat| / sum|y|."""
     actual, forecast = _validate_pair(y_true, y_pred)
@@ -45,16 +58,9 @@ def mase(
     season_length: int = 7,
 ) -> float:
     """Mean absolute scaled error against a seasonal naive on the training set."""
-    if season_length < 1:
-        raise ValueError(f"season_length must be at least 1, got {season_length}")
     actual, forecast = _validate_pair(y_true, y_pred)
-    train = _validate_series(y_train, "y_train")
-    if train.size <= season_length:
-        raise ValueError(
-            "y_train needs more than season_length values, "
-            f"got {train.size} with season_length={season_length}"
-        )
-    naive_mae = np.abs(train[season_length:] - train[:-season_length]).mean()
+    naive_errors = _seasonal_naive_errors(y_train, season_length)
+    naive_mae = np.abs(naive_errors).mean()
     if naive_mae == 0:
         raise ValueError("naive MAE is zero on y_train, MASE is undefined")
     return float(np.abs(actual - forecast).mean() / naive_mae)
