@@ -64,3 +64,19 @@ def mase(
     if naive_mae == 0:
         raise ValueError("naive MAE is zero on y_train, MASE is undefined")
     return float(np.abs(actual - forecast).mean() / naive_mae)
+
+
+def rmsse(
+    y_true: ArrayLike,
+    y_pred: ArrayLike,
+    y_train: ArrayLike,
+    season_length: int = 7,
+) -> float:
+    """Mean cube scaled error against a seasonal naive on the training set."""
+    actual, forecast = _validate_pair(y_true, y_pred)
+    naive_errors = _seasonal_naive_errors(y_train, season_length)
+    naive_mse = np.square(naive_errors).mean()
+    model_mse = np.square(actual - forecast).mean()
+    if naive_mse == 0:
+        raise ValueError("naive MSE is zero on y_train, RMSSE is undefined")
+    return float(np.sqrt(model_mse / naive_mse))
