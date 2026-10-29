@@ -2,10 +2,12 @@
 
 ## Purpose
 
-This EDA describes the daily bike-counter dataset before model development. It
-assesses data coverage, missing observations, zero-count periods, traffic
-distributions, and temporal patterns. It also records the limitations and
-decisions relevant to the forecasting proof of concept.
+The dataset spans approximately 13 months. This window comes from the source,
+not from the ingestion code: the current Paris Open Data dataset is a sliding
+window of about 13 months, and no date filter is applied. Yearly archives
+(2016-2025) are published separately and can extend the history in a later
+phase, after checking schema and counter-identifier consistency. Counter
+coverage also varies across dates.
 
 The detailed analysis is available in
 [`notebooks/01_eda_bike_counts.ipynb`](../notebooks/01_eda_bike_counts.ipynb).
