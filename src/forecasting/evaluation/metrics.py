@@ -4,29 +4,57 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 
-def _as_float_arrays(
+def _validate_series(values: ArrayLike, name: str) -> NDArray[np.float64]:
+    """Convert one input to a 1-D float array and validate it."""
+    array = np.asarray(values, dtype=np.float64)
+    if array.ndim != 1:
+        raise ValueError(f"{name} must be 1-D, got ndim {array.ndim}")
+    if array.size == 0:
+        raise ValueError(f"{name} must not be empty")
+    if not np.isfinite(array).all():
+        raise ValueError(f"{name} must not contain NaN or infinite values")
+    return array
+
+
+def _validate_pair(
     y_true: ArrayLike, y_pred: ArrayLike
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Convert inputs to 1-D float arrays and validate them."""
-    true = np.asarray(y_true, dtype=np.float64)
-    pred = np.asarray(y_pred, dtype=np.float64)
-    if true.ndim != 1 or pred.ndim != 1:
-        raise ValueError(f"y_true and y_pred must be 1-D, got ndim {true.ndim} and {pred.ndim}")
-    if true.shape != pred.shape:
+    """Convert actuals and forecasts to validated float arrays of the same shape."""
+    actual = _validate_series(y_true, "y_true")
+    forecast = _validate_series(y_pred, "y_pred")
+    if actual.shape != forecast.shape:
         raise ValueError(
-            f"y_true and y_pred must have the same shape, got {true.shape} and {pred.shape}"
+            f"y_true and y_pred must have the same shape, got {actual.shape} and {forecast.shape}"
         )
-    if true.size == 0:
-        raise ValueError("y_true and y_pred must not be empty")
-    if not (np.isfinite(true).all() and np.isfinite(pred).all()):
-        raise ValueError("y_true and y_pred must not contain NaN or infinite values")
-    return true, pred
+    return actual, forecast
 
 
 def wape(y_true: ArrayLike, y_pred: ArrayLike) -> float:
     """Weighted absolute percentage error: sum|y - yhat| / sum|y|."""
-    actual, forecast = _as_float_arrays(y_true, y_pred)
+    actual, forecast = _validate_pair(y_true, y_pred)
     denominator = np.abs(actual).sum()
     if denominator == 0:
         raise ValueError("sum of absolute actuals is zero, WAPE is undefined")
     return float(np.abs(actual - forecast).sum() / denominator)
+
+
+def mase(
+    y_true: ArrayLike,
+    y_pred: ArrayLike,
+    y_train: ArrayLike,
+    season_length: int = 7,
+) -> float:
+    """Mean absolute scaled error against a seasonal naive on the training set."""
+    if season_length < 1:
+        raise ValueError(f"season_length must be at least 1, got {season_length}")
+    actual, forecast = _validate_pair(y_true, y_pred)
+    train = _validate_series(y_train, "y_train")
+    if train.size <= season_length:
+        raise ValueError(
+            "y_train needs more than season_length values, "
+            f"got {train.size} with season_length={season_length}"
+        )
+    naive_mae = np.abs(train[season_length:] - train[:-season_length]).mean()
+    if naive_mae == 0:
+        raise ValueError("naive MAE is zero on y_train, MASE is undefined")
+    return float(np.abs(actual - forecast).mean() / naive_mae)
