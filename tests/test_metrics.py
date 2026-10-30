@@ -6,7 +6,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from forecasting.evaluation.metrics import mase, pinball_loss, rmsse, wape
+from forecasting.evaluation.metrics import (
+    interval_coverage,
+    mase,
+    mean_interval_width,
+    pinball_loss,
+    rmsse,
+    wape,
+)
 
 INVALID_SERIES = [
     ([], [], "empty"),
@@ -57,7 +64,7 @@ def test_wape_zero_actuals_raises() -> None:
 
 
 def test_wape_length_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match="shape"):
+    with pytest.raises(ValueError, match="must have the same shape"):
         wape([10, 20], [12])
 
 
@@ -139,7 +146,7 @@ def test_scaled_metrics_train_too_short_raises(metric: Callable[..., float]) -> 
 
 @pytest.mark.parametrize("metric", [mase, rmsse])
 def test_scaled_metrics_length_mismatch_raises(metric: Callable[..., float]) -> None:
-    with pytest.raises(ValueError, match="shape"):
+    with pytest.raises(ValueError, match="must have the same shape"):
         metric([10, 20], [12], [1, 2, 4, 8], season_length=1)
 
 
@@ -191,5 +198,118 @@ def test_pinball_invalid_quantile_raises(quantile: float) -> None:
 
 
 def test_pinball_length_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match="shape"):
+    with pytest.raises(ValueError, match="must have the same shape"):
         pinball_loss([10, 20], [12], quantile=0.9)
+
+
+# interval coverage
+
+
+@pytest.mark.parametrize(
+    ("y_true", "lower", "upper", "expected"),
+    [
+        pytest.param([1, 2, 2, 4], [0, 0, 0, 0], [3, 3, 3, 3], 0.75, id="one-outside"),
+        pytest.param([0, 3], [0, 0], [3, 3], 1.0, id="bounds-inclusive"),
+        pytest.param([2, 3, 4, 2], [1, 1, 1, 1], [4, 5, 5, 5], 1.0, id="full-coverage"),
+        pytest.param([2, 3, 4, 2], [3, 4, 5, 3], [4, 6, 6, 6], 0.0, id="no-coverage"),
+        pytest.param([2], [2], [2], 1.0, id="zero-width-interval-is-valid"),
+    ],
+)
+def test_interval_coverage_hand_computed(
+    y_true: list[int], lower: list[int], upper: list[int], expected: float
+) -> None:
+    assert interval_coverage(y_true, lower, upper) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("y_true", "lower", "upper"),
+    [
+        pytest.param([1, 2, 2], [0, 0, 0], [3, 3, 3, 3], id="upper-longer"),
+        pytest.param([1, 2, 2], [0, 0, 0], [3, 3], id="upper-shorter"),
+        pytest.param([2, 2], [1, 1, 1], [5, 5], id="lower-longer"),
+        pytest.param([2, 2], [1], [6, 6], id="lower-shorter"),
+        pytest.param([1, 2, 2], [0, 0], [3, 3], id="y-true-longer"),
+        pytest.param([1, 2], [0, 0, 0], [3, 3, 3], id="y-true-shorter"),
+        pytest.param([1], [0, 0], [3, 3], id="y-true-size-one"),
+    ],
+)
+def test_interval_coverage_length_mismatch_raises(
+    y_true: list[int], lower: list[int], upper: list[int]
+) -> None:
+    with pytest.raises(ValueError, match="must have the same shape"):
+        interval_coverage(y_true, lower, upper)
+
+
+def test_interval_coverage_lower_above_upper_raises() -> None:
+    with pytest.raises(ValueError, match="lower"):
+        interval_coverage([3, 3], [2, 5], [4, 4])
+
+
+@pytest.mark.parametrize(
+    ("y_true", "lower", "upper", "message"),
+    [
+        pytest.param([float("nan"), 2], [0, 0], [3, 3], "y_true", id="nan-in-y_true"),
+        pytest.param([1, 2], [float("nan"), 0], [3, 3], "lower", id="nan-in-lower"),
+        pytest.param([1, 2], [0, 0], [float("nan"), 3], "upper", id="nan-in-upper"),
+    ],
+)
+def test_interval_coverage_invalid_input_raises(
+    y_true: list[Any], lower: list[Any], upper: list[Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        interval_coverage(y_true, lower, upper)
+
+
+# mean_interval_width
+
+
+# --- mean_interval_width ---
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "expected"),
+    [
+        pytest.param([1, 2, 2], [2, 4, 4], 5 / 3, id="hand-computed"),
+        pytest.param([0, 2], [4, 3], 2.5, id="mixed-widths"),
+        pytest.param([2, 2], [2, 2], 0.0, id="zero-width"),
+    ],
+)
+def test_mean_interval_width_hand_computed(
+    lower: list[int], upper: list[int], expected: float
+) -> None:
+    assert mean_interval_width(lower, upper) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [
+        pytest.param([1, 2, 2], [0, 1, 3], id="one-position-inverted"),
+        pytest.param([2, 2, 2], [1, 1, 1], id="all-inverted"),
+        pytest.param([2], [1], id="single-point"),
+    ],
+)
+def test_mean_interval_width_lower_above_upper_raises(lower: list[int], upper: list[int]) -> None:
+    with pytest.raises(ValueError, match="lower must not exceed upper"):
+        mean_interval_width(lower, upper)
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [
+        pytest.param([1, 2], [3], id="upper-size-one"),
+        pytest.param([1], [3, 4], id="lower-size-one"),
+        pytest.param([1, 2, 3], [4, 5], id="upper-shorter"),
+        pytest.param([1, 2], [4, 5, 6], id="upper-longer"),
+    ],
+)
+def test_mean_interval_width_length_mismatch_raises(lower: list[int], upper: list[int]) -> None:
+    with pytest.raises(ValueError, match="must have the same shape"):
+        mean_interval_width(lower, upper)
+
+
+@pytest.mark.parametrize(("lower", "upper", "message"), INVALID_SERIES)
+def test_mean_interval_width_invalid_inputs_raise(
+    lower: list[Any], upper: list[Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        mean_interval_width(lower, upper)
