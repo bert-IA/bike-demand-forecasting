@@ -42,6 +42,23 @@ def _seasonal_naive_errors(y_train: ArrayLike, season_length: int) -> NDArray[np
     return train[season_length:] - train[:-season_length]
 
 
+def _validate_interval(
+    y_true: ArrayLike, lower: ArrayLike, upper: ArrayLike
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Convert actual lower and upper forecasts to validated float arrays of the same shape"""
+    actual = _validate_series(y_true, "y_true")
+    lower_forecast = _validate_series(lower, "lower")
+    upper_forecast = _validate_series(upper, "upper")
+    if not actual.shape == lower_forecast.shape == upper_forecast.shape:
+        raise ValueError(
+            "y_true, lower and upper must have the same shape, "
+            f"got {actual.shape} and {lower_forecast.shape} and {upper_forecast.shape}"
+        )
+    if np.any(lower_forecast > upper_forecast):
+        raise ValueError("lower must not exceed upper")
+    return actual, lower_forecast, upper_forecast
+
+
 def wape(y_true: ArrayLike, y_pred: ArrayLike) -> float:
     """Weighted absolute percentage error: sum|y - yhat| / sum|y|."""
     actual, forecast = _validate_pair(y_true, y_pred)
@@ -90,3 +107,18 @@ def pinball_loss(y_true: ArrayLike, y_pred: ArrayLike, quantile: float) -> float
     actual, forecast = _validate_pair(y_true, y_pred)
     error = actual - forecast
     return float(np.maximum(quantile * error, (quantile - 1) * error).mean())
+
+
+def interval_coverage(y_true: ArrayLike, lower: ArrayLike, upper: ArrayLike) -> float:
+    """Share of observations inside the prediction interval."""
+    actual, lower_forecast, upper_forecast = _validate_interval(y_true, lower, upper)
+    inside = (lower_forecast <= actual) & (actual <= upper_forecast)
+    return float(inside.mean())
+
+
+def mean_interval_width(lower: ArrayLike, upper: ArrayLike) -> float:
+    """Mean width of the prediction interval."""
+    lower_forecast, upper_forecast = _validate_pair(lower, upper)
+    if np.any(lower_forecast > upper_forecast):
+        raise ValueError("lower must not exceed upper")
+    return float((upper_forecast - lower_forecast).mean())
