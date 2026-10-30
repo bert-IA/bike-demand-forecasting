@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from forecasting.evaluation.metrics import mase, rmsse, wape
+from forecasting.evaluation.metrics import mase, pinball_loss, rmsse, wape
 
 INVALID_SERIES = [
     ([], [], "empty"),
@@ -159,3 +159,37 @@ def test_scaled_metrics_invalid_train_raises(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         metric([1, 2], [1, 2], y_train, season_length=1)
+
+
+# pinball loss
+
+
+def test_pinball_underforecast() -> None:
+    # Réel 10, prévision 8 : erreur positive de 2.
+    # Pour q=0.9, la perte vaut 0.9 * 2 = 1.8.
+    assert pinball_loss([10], [8], quantile=0.9) == pytest.approx(1.8)
+
+
+def test_pinball_overforecast() -> None:
+    # Réel 10, prévision 12 : erreur négative de -2.
+    # Pour q=0.9, la perte vaut (1 - 0.9) * 2 = 0.2.
+    assert pinball_loss([10], [12], quantile=0.9) == pytest.approx(0.2)
+
+
+def test_pinball_median_is_half_mae() -> None:
+    y_true = [10, 20]
+    y_pred = [12, 16]
+
+    # MAE = (2 + 4) / 2 = 3 ; pinball à q=0.5 = MAE / 2.
+    assert pinball_loss(y_true, y_pred, quantile=0.5) == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize("quantile", [0, 1, -0.1, 1.1])
+def test_pinball_invalid_quantile_raises(quantile: float) -> None:
+    with pytest.raises(ValueError, match="quantile"):
+        pinball_loss([10, 20], [12, 18], quantile=quantile)
+
+
+def test_pinball_length_mismatch_raises() -> None:
+    with pytest.raises(ValueError, match="shape"):
+        pinball_loss([10, 20], [12], quantile=0.9)
