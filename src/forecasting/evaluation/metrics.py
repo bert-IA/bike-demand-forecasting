@@ -80,3 +80,13 @@ def rmsse(
     if naive_mse == 0:
         raise ValueError("naive MSE is zero on y_train, RMSSE is undefined")
     return float(np.sqrt(model_mse / naive_mse))
+
+
+def pinball_loss(y_true: ArrayLike, y_pred: ArrayLike, quantile: float) -> float:
+    """Compute the mean pinball loss for predictions of a given quantile."""
+
+    if not 0 < quantile < 1:
+        raise ValueError(f"quantile value not in range 0 < q < 1, got {quantile}")
+    actual, forecast = _validate_pair(y_true, y_pred)
+    error = actual - forecast
+    return float(np.maximum(quantile * error, (quantile - 1) * error).mean())
