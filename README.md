@@ -16,5 +16,8 @@ rigorous model benchmark (baselines, GBM, deep learning) and a decision-support 
 ## Repository layout
 See `docs/` for architecture decision records (ADR).
 
+## Documentation
+- [Series quality data dictionary](docs/data-dictionary.md)
+
 ## License
 MIT
