@@ -4,7 +4,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from forecasting.data.prepare_series import compute_quality
+from forecasting.data.prepare_series import compute_quality, select_series
 
 # {series_id: {day_of_january: y}}. A missing day means no row at all.
 SAMPLE_SERIES: dict[str, dict[int, int]] = {
@@ -38,8 +38,8 @@ def quality() -> pl.DataFrame:
     return compute_quality(make_sample())
 
 
-def row(quality: pl.DataFrame, series_id: str) -> dict[str, Any]:
-    return quality.filter(pl.col("series_id") == series_id).row(0, named=True)
+def row(table: pl.DataFrame, series_id: str) -> dict[str, Any]:
+    return table.filter(pl.col("series_id") == series_id).row(0, named=True)
 
 
 def test_keeps_one_row_per_series(quality: pl.DataFrame) -> None:
@@ -79,3 +79,51 @@ def test_expected_values(
     quality: pl.DataFrame, series_id: str, column: str, expected: object
 ) -> None:
     assert row(quality, series_id)[column] == expected
+
+
+# --- select_series ---
+@pytest.fixture
+def selection(quality: pl.DataFrame) -> pl.DataFrame:
+    return select_series(quality, max_gap_days=2, max_days_missing_at_end=3, min_useful_days=6)
+
+
+@pytest.mark.parametrize(
+    ("series_id", "dead", "early_stop", "large_gap", "too_short", "kept"),
+    [
+        pytest.param("A", False, False, False, False, True, id="a-kept"),
+        pytest.param("B", False, False, True, False, False, id="b-large-gap"),
+        pytest.param("C", False, False, False, False, True, id="c-kept"),
+        pytest.param("D", True, True, False, False, False, id="d-dead"),
+        pytest.param("E", False, False, False, True, False, id="e-too-short"),
+        pytest.param("F", False, True, False, False, False, id="f-early-stop"),
+        pytest.param("G", False, True, False, True, False, id="g-two-reasons"),
+    ],
+)
+def test_selection_flags(
+    selection: pl.DataFrame,
+    series_id: str,
+    dead: bool,
+    early_stop: bool,
+    large_gap: bool,
+    too_short: bool,
+    kept: bool,
+) -> None:
+    assert row(selection, series_id) == {
+        "series_id": series_id,
+        "dead": dead,
+        "early_stop": early_stop,
+        "large_gap": large_gap,
+        "too_short": too_short,
+        "kept": kept,
+    }
+
+
+def test_too_short_threshold_is_strict(quality: pl.DataFrame) -> None:
+    kept_at_limit = select_series(
+        quality, max_gap_days=2, max_days_missing_at_end=3, min_useful_days=5
+    )
+    rejected_below = select_series(
+        quality, max_gap_days=2, max_days_missing_at_end=3, min_useful_days=6
+    )
+    assert row(kept_at_limit, "E")["too_short"] is False
+    assert row(rejected_below, "E")["too_short"] is True
