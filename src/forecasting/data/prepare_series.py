@@ -1,5 +1,11 @@
 import polars as pl
 
+from forecasting.config import (
+    MAX_DAYS_MISSING_AT_END,
+    MAX_FILLABLE_GAP_DAYS,
+    MIN_USEFUL_DAYS,
+)
+
 
 def compute_quality(data: pl.DataFrame) -> pl.DataFrame:
     """Measure data quality per series. Decides nothing."""
@@ -71,5 +77,31 @@ def compute_quality(data: pl.DataFrame) -> pl.DataFrame:
         aggregate.join(gaps, on="series_id", how="left")
         .join(longest_zero_run, on="series_id", how="left")
         .with_columns(pl.col("longest_zero_run").fill_null(0))
+        .sort("series_id")
+    )
+
+
+def select_series(
+    quality: pl.DataFrame,
+    *,
+    max_gap_days: int = MAX_FILLABLE_GAP_DAYS,
+    max_days_missing_at_end: int = MAX_DAYS_MISSING_AT_END,
+    min_useful_days: int = MIN_USEFUL_DAYS,
+) -> pl.DataFrame:
+    """Return (kept series ids, report of discarded series with their reasons)."""
+    return (
+        quality.select(
+            "series_id",
+            dead=pl.col("first_positive_timestamp").is_null(),
+            early_stop=pl.col("days_missing_at_end") > max_days_missing_at_end,
+            large_gap=pl.col("longest_gap") > max_gap_days,
+            too_short=(
+                (
+                    pl.col("calendar_span_days") - pl.col("days_before_first_positive")
+                    < min_useful_days
+                ).fill_null(False)
+            ),
+        )
+        .with_columns(kept=~pl.any_horizontal("dead", "early_stop", "large_gap", "too_short"))
         .sort("series_id")
     )
