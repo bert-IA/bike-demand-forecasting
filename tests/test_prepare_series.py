@@ -4,7 +4,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from forecasting.data.prepare_series import compute_quality, select_series
+from forecasting.data.prepare_series import build_daily_grid, compute_quality, select_series
 
 # {series_id: {day_of_january: y}}. A missing day means no row at all.
 SAMPLE_SERIES: dict[str, dict[int, int]] = {
@@ -127,3 +127,97 @@ def test_too_short_threshold_is_strict(quality: pl.DataFrame) -> None:
     )
     assert row(kept_at_limit, "E")["too_short"] is False
     assert row(rejected_below, "E")["too_short"] is True
+
+
+# {series_id: {day_of_january: y}}. A missing day means no row at all.
+GRID_SERIES: dict[str, dict[int, int]] = {
+    "F": {1: 4, 2: 0, 3: 0, 6: 0, 7: 5},
+    "G": dict(zip(range(1, 9), [0, 0, 0, 5, 6, 0, 0, 7], strict=True)),
+    "H": dict(zip(range(1, 11), [3, *[0] * 7, 4, 5], strict=True)),
+    "I": dict(zip(range(1, 12), [3, *[0] * 8, 4, 5], strict=True)),
+    "J": {1: 0, 2: 5, 3: 0, 5: 7, 6: 4},
+    "Z": {1: 5, 2: 6, 3: 7},
+}
+KEPT = {"F": True, "G": True, "H": True, "I": True, "J": True, "Z": False}
+
+
+def make_grid_input() -> pl.DataFrame:
+    rows = [
+        {"series_id": sid, "timestamp": datetime(2026, 1, day), "y": float(y)}
+        for sid, values in GRID_SERIES.items()
+        for day, y in values.items()
+    ]
+    return pl.DataFrame(rows).sort("timestamp", descending=True)
+
+
+def make_grid_selection() -> pl.DataFrame:
+    return pl.DataFrame({"series_id": list(KEPT), "kept": list(KEPT.values())})
+
+
+@pytest.fixture
+def grid() -> pl.DataFrame:
+    return build_daily_grid(make_grid_input(), make_grid_selection())
+
+
+# (day_of_january, y, is_imputed, is_long_zero_run)
+GridRow = tuple[int, float, bool, bool]
+EXPECTED_GRID: dict[str, list[GridRow]] = {
+    "F": [
+        (1, 4.0, False, False),
+        (2, 0.0, False, False),
+        (3, 0.0, False, False),
+        (4, 0.0, True, False),
+        (5, 0.0, True, False),
+        (6, 0.0, False, False),
+        (7, 5.0, False, False),
+    ],
+    "G": [
+        (4, 5.0, False, False),
+        (5, 6.0, False, False),
+        (6, 0.0, False, False),
+        (7, 0.0, False, False),
+        (8, 7.0, False, False),
+    ],
+    "H": [
+        (1, 3.0, False, False),
+        *[(day, 0.0, False, False) for day in range(2, 9)],
+        (9, 4.0, False, False),
+        (10, 5.0, False, False),
+    ],
+    "I": [
+        (1, 3.0, False, False),
+        *[(day, 0.0, False, True) for day in range(2, 10)],
+        (10, 4.0, False, False),
+        (11, 5.0, False, False),
+    ],
+    "J": [
+        (2, 5.0, False, False),
+        (3, 0.0, False, False),
+        (4, 3.5, True, False),
+        (5, 7.0, False, False),
+        (6, 4.0, False, False),
+    ],
+}
+
+
+@pytest.mark.parametrize("series_id", list(EXPECTED_GRID))
+def test_grid_rows(grid: pl.DataFrame, series_id: str) -> None:
+    actual = (
+        grid.filter(pl.col("series_id") == series_id)
+        .sort("timestamp")
+        .select(pl.col("timestamp").dt.day(), "y", "is_imputed", "is_long_zero_run")
+        .rows()
+    )
+    assert actual == EXPECTED_GRID[series_id]
+
+
+def test_grid_drops_unkept_series(grid: pl.DataFrame) -> None:
+    assert set(grid["series_id"]) == {"F", "G", "H", "I", "J"}
+
+
+def test_grid_has_no_null(grid: pl.DataFrame) -> None:
+    assert grid["y"].null_count() == 0
+
+
+def test_grid_columns(grid: pl.DataFrame) -> None:
+    assert grid.columns == ["series_id", "timestamp", "y", "is_imputed", "is_long_zero_run"]

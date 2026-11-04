@@ -1,6 +1,7 @@
 import polars as pl
 
 from forecasting.config import (
+    LONG_ZERO_RUN_DAYS,
     MAX_DAYS_MISSING_AT_END,
     MAX_FILLABLE_GAP_DAYS,
     MIN_USEFUL_DAYS,
@@ -88,7 +89,7 @@ def select_series(
     max_days_missing_at_end: int = MAX_DAYS_MISSING_AT_END,
     min_useful_days: int = MIN_USEFUL_DAYS,
 ) -> pl.DataFrame:
-    """Return (kept series ids, report of discarded series with their reasons)."""
+    """Flag each series with its rejection reasons and a `kept` column."""
     return (
         quality.select(
             "series_id",
@@ -96,12 +97,58 @@ def select_series(
             early_stop=pl.col("days_missing_at_end") > max_days_missing_at_end,
             large_gap=pl.col("longest_gap") > max_gap_days,
             too_short=(
-                (
-                    pl.col("calendar_span_days") - pl.col("days_before_first_positive")
-                    < min_useful_days
-                ).fill_null(False)
-            ),
+                pl.col("calendar_span_days") - pl.col("days_before_first_positive")
+                < min_useful_days
+            ).fill_null(False),
         )
         .with_columns(kept=~pl.any_horizontal("dead", "early_stop", "large_gap", "too_short"))
         .sort("series_id")
+    )
+
+
+def build_daily_grid(daily: pl.DataFrame, selection: pl.DataFrame) -> pl.DataFrame:
+    """Build a gap-free daily grid for each kept series (work in progress)."""
+    kept_ids = selection.filter(pl.col("kept"))["series_id"]
+    trimmed = (
+        daily.filter(pl.col("series_id").is_in(kept_ids.implode()))
+        .with_columns(
+            first_positive_timestamp=pl.col("timestamp")
+            .filter(pl.col("y") > 0)
+            .min()
+            .over("series_id")
+        )
+        .filter(pl.col("timestamp") >= pl.col("first_positive_timestamp"))
+        .drop("first_positive_timestamp")
+    )
+
+    bounds = trimmed.group_by("series_id").agg(
+        start=pl.col("timestamp").min(),
+        end=pl.col("timestamp").max(),
+    )
+
+    calendar = bounds.select(
+        "series_id",
+        timestamp=pl.datetime_ranges(pl.col("start"), pl.col("end"), interval="1d"),
+    ).explode("timestamp")
+
+    grid = (
+        calendar.join(trimmed, on=["series_id", "timestamp"], how="left")
+        .with_columns(is_imputed=pl.col("y").is_null())
+        .sort("series_id", "timestamp")
+        .with_columns(pl.col("y").interpolate().over("series_id"))
+    )
+
+    return (
+        grid.with_columns(is_zero=(pl.col("y") == 0) & ~pl.col("is_imputed"))
+        .with_columns(
+            run_id=(pl.col("is_zero") != pl.col("is_zero").shift().over("series_id"))
+            .fill_null(True)
+            .cum_sum()
+            .over("series_id")
+        )
+        .with_columns(run_length=pl.len().over("series_id", "run_id"))
+        .with_columns(
+            is_long_zero_run=pl.col("is_zero") & (pl.col("run_length") > LONG_ZERO_RUN_DAYS)
+        )
+        .drop("is_zero", "run_id", "run_length")
     )
