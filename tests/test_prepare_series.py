@@ -221,3 +221,54 @@ def test_grid_has_no_null(grid: pl.DataFrame) -> None:
 
 def test_grid_columns(grid: pl.DataFrame) -> None:
     assert grid.columns == ["series_id", "timestamp", "y", "is_imputed", "is_long_zero_run"]
+
+
+# mise à jour des decisions de selections des compteurs
+def test_quality_uses_last_observed_day_as_dataset_end() -> None:
+    data = pl.DataFrame(
+        {
+            "series_id": ["A", "A", "B", "B"],
+            "timestamp": [
+                datetime(2026, 1, 1),
+                datetime(2026, 1, 2),
+                datetime(2026, 1, 1),
+                datetime(2026, 1, 2),
+            ],
+            "y": [10.0, 12.0, 20.0, 22.0],
+        }
+    )
+    cutoff = datetime(2026, 1, 3)
+
+    quality = compute_quality(data)
+
+    for series_id in ("A", "B"):
+        series = row(quality, series_id)
+
+        assert series["last_timestamp"] == datetime(2026, 1, 2)
+        assert series["days_missing_at_end"] == 0
+        assert (cutoff - series["last_timestamp"]).days == 1
+
+
+def test_quality_longest_gap_includes_days_before_first_positive() -> None:
+    data = pl.DataFrame(
+        {
+            "series_id": ["A", "A", "A", "B", "B", "B"],
+            "timestamp": [
+                datetime(2026, 1, 1),
+                datetime(2026, 1, 11),
+                datetime(2026, 1, 12),
+                datetime(2026, 1, 1),
+                datetime(2026, 1, 11),
+                datetime(2026, 1, 12),
+            ],
+            "y": [0.0, 5.0, 6.0, 4.0, 5.0, 6.0],
+        }
+    )
+
+    quality = compute_quality(data)
+
+    assert row(quality, "A")["first_positive_timestamp"] == datetime(2026, 1, 11)
+    assert row(quality, "A")["longest_gap"] == 9
+
+    assert row(quality, "B")["first_positive_timestamp"] == datetime(2026, 1, 1)
+    assert row(quality, "B")["longest_gap"] == 9
