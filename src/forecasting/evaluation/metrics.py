@@ -76,10 +76,25 @@ def mase(
 ) -> float:
     """Mean absolute scaled error against a seasonal naive on the training set."""
     actual, forecast = _validate_pair(y_true, y_pred)
-    naive_errors = _seasonal_naive_errors(y_train, season_length)
-    naive_mae = np.abs(naive_errors).mean()
+    naive_mae, _ = seasonal_naive_reference(y_train, season_length)
     if naive_mae == 0:
         raise ValueError("naive MAE is zero on y_train, MASE is undefined")
+    return mase_from_reference(actual, forecast, naive_mae)
+
+
+def mase_from_reference(
+    y_true: ArrayLike,
+    y_pred: ArrayLike,
+    naive_mae: float,
+) -> float:
+    """Calculate MASE using a precomputed seasonal naive MAE."""
+
+    actual, forecast = _validate_pair(y_true, y_pred)
+    if not np.isfinite(naive_mae) or naive_mae < 0:
+        raise ValueError("naive MAE must be finite and non-negative")
+    if naive_mae == 0:
+        raise ValueError("naive MAE is zero, MASE is undefined")
+
     return float(np.abs(actual - forecast).mean() / naive_mae)
 
 
@@ -89,14 +104,26 @@ def rmsse(
     y_train: ArrayLike,
     season_length: int = 7,
 ) -> float:
-    """Mean cube scaled error against a seasonal naive on the training set."""
+    """Root mean squared scaled error against a seasonal naive on the training set."""
     actual, forecast = _validate_pair(y_true, y_pred)
-    naive_errors = _seasonal_naive_errors(y_train, season_length)
-    naive_mse = np.square(naive_errors).mean()
-    model_mse = np.square(actual - forecast).mean()
+    _, naive_mse = seasonal_naive_reference(y_train, season_length)
     if naive_mse == 0:
         raise ValueError("naive MSE is zero on y_train, RMSSE is undefined")
-    return float(np.sqrt(model_mse / naive_mse))
+    return rmsse_from_reference(actual, forecast, naive_mse)
+
+
+def rmsse_from_reference(
+    y_true: ArrayLike,
+    y_pred: ArrayLike,
+    naive_mse: float,
+) -> float:
+    """Calculate RMSSE using a precomputed seasonal naive MSE."""
+    actual, forecast = _validate_pair(y_true, y_pred)
+    if not np.isfinite(naive_mse) or naive_mse < 0:
+        raise ValueError("naive MSE must be finite and non-negative")
+    if naive_mse == 0:
+        raise ValueError("naive MSE is zero, RMSSE is undefined")
+    return float(np.sqrt(np.square(actual - forecast).mean() / naive_mse))
 
 
 def pinball_loss(y_true: ArrayLike, y_pred: ArrayLike, quantile: float) -> float:
@@ -122,3 +149,14 @@ def mean_interval_width(lower: ArrayLike, upper: ArrayLike) -> float:
     if np.any(lower_forecast > upper_forecast):
         raise ValueError("lower must not exceed upper")
     return float((upper_forecast - lower_forecast).mean())
+
+
+def seasonal_naive_reference(
+    y_train: ArrayLike,
+    season_length: int = 7,
+) -> tuple[float, float]:
+    """Return the seasonal naive MAE and MSE for a training series."""
+
+    errors = _seasonal_naive_errors(y_train, season_length)
+
+    return float(np.abs(errors).mean()), float(np.square(errors).mean())
