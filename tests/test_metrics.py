@@ -9,9 +9,12 @@ import pytest
 from forecasting.evaluation.metrics import (
     interval_coverage,
     mase,
+    mase_from_reference,
     mean_interval_width,
     pinball_loss,
     rmsse,
+    rmsse_from_reference,
+    seasonal_naive_reference,
     wape,
 )
 
@@ -313,3 +316,87 @@ def test_mean_interval_width_invalid_inputs_raise(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         mean_interval_width(lower, upper)
+
+
+def test_seasonal_naive_reference_hand_computed() -> None:
+    train = np.array([1.0, 3.0, 2.0, 6.0])
+
+    naive_mae, naive_mse = seasonal_naive_reference(train, season_length=1)
+
+    assert naive_mae == pytest.approx(7 / 3)
+    assert naive_mse == pytest.approx(7.0)
+
+
+def test_seasonal_naive_reference_constant_train() -> None:
+    train = np.array([3.0, 3.0, 3.0, 3.0])
+
+    naive_mae, naive_mse = seasonal_naive_reference(train, season_length=1)
+
+    assert naive_mae == 0.0
+    assert naive_mse == 0.0
+
+
+def test_seasonal_naive_reference_weekly() -> None:
+    train = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 3.0, 5.0])
+
+    naive_mae, naive_mse = seasonal_naive_reference(train, season_length=7)
+
+    assert naive_mae == pytest.approx(2.5)
+    assert naive_mse == pytest.approx(6.5)
+
+
+def test_mase_from_reference_hand_computed() -> None:
+    result = mase_from_reference(
+        y_true=[10.0, 12.0],
+        y_pred=[9.0, 15.0],
+        naive_mae=2.0,
+    )
+
+    assert result == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("naive_mae", [-1.0, 0.0, np.nan, np.inf, -np.inf])
+def test_mase_from_reference_invalid_reference(naive_mae: float) -> None:
+    with pytest.raises(ValueError):
+        mase_from_reference(
+            y_true=[10.0, 12.0],
+            y_pred=[9.0, 15.0],
+            naive_mae=naive_mae,
+        )
+
+
+def test_rmsse_from_reference_hand_computed() -> None:
+    result = rmsse_from_reference(
+        y_true=[10.0, 12.0],
+        y_pred=[9.0, 15.0],
+        naive_mse=7.0,
+    )
+
+    assert result == pytest.approx(np.sqrt(5 / 7))
+
+
+@pytest.mark.parametrize("naive_mse", [-1.0, 0.0, np.nan, np.inf, -np.inf])
+def test_rmsse_from_reference_invalid_reference(naive_mse: float) -> None:
+    with pytest.raises(ValueError):
+        rmsse_from_reference(
+            y_true=[10.0, 12.0],
+            y_pred=[9.0, 15.0],
+            naive_mse=naive_mse,
+        )
+
+
+def test_scaled_metrics_match_precomputed_references() -> None:
+    train = np.array([1.0, 2.0, 4.0, 8.0])
+    y_true = [10.0, 12.0]
+    y_pred = [9.0, 15.0]
+
+    naive_mae, naive_mse = seasonal_naive_reference(train, season_length=1)
+
+    direct_mase = mase(y_true, y_pred, train, season_length=1)
+    reference_mase = mase_from_reference(y_true, y_pred, naive_mae)
+
+    direct_rmsse = rmsse(y_true, y_pred, train, season_length=1)
+    reference_rmsse = rmsse_from_reference(y_true, y_pred, naive_mse)
+
+    assert direct_mase == pytest.approx(reference_mase)
+    assert direct_rmsse == pytest.approx(reference_rmsse)
