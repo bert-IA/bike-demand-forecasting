@@ -73,7 +73,9 @@ def summarize_at_cutoff(data: pl.DataFrame, cutoff: datetime) -> pl.DataFrame:
     )
 
 
-def build_eligibility_report(data: pl.DataFrame, cutoff: datetime) -> pl.DataFrame:
+def build_eligibility_report(
+    data: pl.DataFrame, cutoff: datetime, initial_train_days: int = INITIAL_TRAIN_DAYS
+) -> pl.DataFrame:
     """Build a series eligibility report using observations up to the cutoff."""
     history = data.filter(pl.col("timestamp") <= cutoff)
     summary = summarize_at_cutoff(history, cutoff)
@@ -94,7 +96,7 @@ def build_eligibility_report(data: pl.DataFrame, cutoff: datetime) -> pl.DataFra
     return (
         report.with_columns(
             not_started=pl.col("first_positive_timestamp").is_null(),
-            too_short=pl.col("useful_days") < INITIAL_TRAIN_DAYS,
+            too_short=pl.col("useful_days") < initial_train_days,
             missing_at_cutoff=pl.col("days_since_last_observation") > 0,
             large_gap=pl.col("longest_active_gap") > MAX_FILLABLE_GAP_DAYS,
         )
@@ -113,6 +115,7 @@ def build_eligibility_report(data: pl.DataFrame, cutoff: datetime) -> pl.DataFra
 def prepare_training_at_cutoff(
     data: pl.DataFrame,
     cutoff: datetime,
+    initial_train_days: int = INITIAL_TRAIN_DAYS,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Return the eligibility report and prepared training data at the cutoff."""
     history = data.filter(pl.col("timestamp") <= cutoff)
@@ -122,7 +125,7 @@ def prepare_training_at_cutoff(
             "duplicate observations in training history: each (series_id, timestamp) must be unique"
         )
 
-    report = build_eligibility_report(history, cutoff)
+    report = build_eligibility_report(history, cutoff=cutoff, initial_train_days=initial_train_days)
     selection = report.select(
         "series_id",
         pl.col("eligible").alias("kept"),
@@ -138,13 +141,14 @@ def run_cutoff(
     *,
     horizon: int,
     season_length: int = SEASON_LENGTH_DAYS,
+    initial_train_days: int = INITIAL_TRAIN_DAYS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Prepare data and generate forecasts for one cutoff."""
     if horizon < 1:
         raise ValueError(f"horizon must be at least 1, got {horizon}")
     if season_length < 1:
         raise ValueError(f"season_length must be at least 1, got {season_length}")
-    report, train = prepare_training_at_cutoff(data, cutoff)
+    report, train = prepare_training_at_cutoff(data, cutoff, initial_train_days=initial_train_days)
     forecast_tables: list[pl.DataFrame] = []
     reference_rows: list[dict[str, object]] = []
     for current_id in train["series_id"].unique():
@@ -217,6 +221,8 @@ def run_backtest(
     model_factory: Callable[[], ForecastModel],
     horizon: int,
     season_length: int = SEASON_LENGTH_DAYS,
+    *,
+    initial_train_days: int = INITIAL_TRAIN_DAYS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Run forecasts at each cutoff and return reports, predictions, and references.
 
@@ -231,7 +237,12 @@ def run_backtest(
     references: list[pl.DataFrame] = []
     for cutoff in cutoffs:
         report, forecast, reference = run_cutoff(
-            data, cutoff, model_factory, horizon=horizon, season_length=season_length
+            data,
+            cutoff,
+            model_factory,
+            horizon=horizon,
+            season_length=season_length,
+            initial_train_days=initial_train_days,
         )
         report = report.with_columns(cutoff=pl.lit(cutoff))
         reports.append(report)
