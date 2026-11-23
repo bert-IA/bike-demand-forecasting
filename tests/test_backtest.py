@@ -1894,3 +1894,86 @@ def test_prepare_training_at_cutoff_allows_same_timestamp_for_distinct_series() 
     assert report["eligible"].sum() == 2
     assert train.height == 360
     assert set(train["series_id"]) == {"A", "B"}
+
+
+@pytest.mark.parametrize(
+    ("minimum_days", "expected_eligible"),
+    [(3, True), (4, False)],
+)
+def test_eligibility_respects_minimum_training_days(
+    minimum_days: int,
+    expected_eligible: bool,
+) -> None:
+    data = pl.DataFrame(
+        {
+            "series_id": ["counter-1"] * 3,
+            "timestamp": [
+                datetime(2026, 3, 21),
+                datetime(2026, 3, 22),
+                datetime(2026, 3, 23),
+            ],
+            "y": [10.0, 12.0, 14.0],
+        }
+    )
+
+    report = build_eligibility_report(
+        data,
+        datetime(2026, 3, 23),
+        initial_train_days=minimum_days,
+    )
+
+    assert report["eligible"].item() is expected_eligible
+
+
+def test_prepare_training_uses_configured_minimum() -> None:
+    data = pl.DataFrame(
+        {
+            "series_id": ["counter-1"] * 3,
+            "timestamp": [
+                datetime(2026, 3, 21),
+                datetime(2026, 3, 22),
+                datetime(2026, 3, 23),
+            ],
+            "y": [10.0, 12.0, 14.0],
+        }
+    )
+
+    report, _ = prepare_training_at_cutoff(
+        data,
+        datetime(2026, 3, 23),
+        initial_train_days=3,
+    )
+
+    assert report["eligible"].item() is True
+
+
+def test_run_backtest_uses_configured_minimum_training_days() -> None:
+    start = datetime(2026, 1, 1)
+    first_cutoff = start + timedelta(days=178)
+    second_cutoff = start + timedelta(days=179)
+
+    data = pl.DataFrame(
+        {
+            "series_id": ["A"] * 180,
+            "timestamp": [start + timedelta(days=day) for day in range(180)],
+            "y": [5.0] * 180,
+        }
+    )
+
+    class FakeModel:
+        def fit(self, train: NDArray[np.float64]) -> None:
+            pass
+
+        def predict(self, horizon: int) -> NDArray[np.float64]:
+            return np.full(horizon, 5.0, dtype=np.float64)
+
+    reports, forecasts, _ = run_backtest(
+        data,
+        [first_cutoff, second_cutoff],
+        FakeModel,
+        horizon=1,
+        initial_train_days=179,
+    )
+
+    assert reports.sort("cutoff")["eligible"].to_list() == [True, True]
+    assert forecasts.height == 2

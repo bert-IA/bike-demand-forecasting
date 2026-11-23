@@ -1,0 +1,14 @@
+experiment:
+  name: bike-validation-14d
+
+data:
+  input_path: data/processed/bike_daily.parquet
+
+validation:
+  train_start: "2025-09-25"
+  initial_train_days: 180
+  first_cutoff: "2026-03-23"
+  last_cutoff: "2026-09-07"
+  horizon_days: 14
+  step_days: 14
+  test_start: "2026-09-22"
