@@ -11,10 +11,10 @@ Imagine : vous lancez un benchmark, obtenez des résultats → **mais 6 mois plu
 - ❌ Quel config.yaml exact a été utilisé ?
 
 ### Première étape : capturer des métadonnées
-La date, les informations Git, certaines versions, la configuration et des
-statistiques sur les données aident à comprendre une exécution. Elles ne
-suffisent pas encore à garantir sa reproductibilité : l'identité des données
-et l'environnement complet restent notamment à tracer.
+La date, les informations Git, la configuration, les empreintes des fichiers
+et les versions des distributions visibles aident à comprendre une exécution.
+Elles ne suffisent pas à garantir sa reproductibilité : il faut notamment
+conserver les fichiers correspondants et tenir compte du système utilisé.
 
 ---
 
@@ -30,6 +30,8 @@ capture_metadata(..., project_root)
   ├─→ get_git_info()
   ├─→ is_git_dirty()
   ├─→ get_package_versions()
+  ├─→ get_installed_distributions()
+  ├─→ hash_file_sha256()
   └─→ [lit les fichiers]
     ↓ (exportée par)
 save_metadata()
@@ -106,6 +108,30 @@ conserve pas leur contenu.
 
 ---
 
+### `get_installed_distributions()` → `list[dict[str, str]]`
+
+Cette fonction recense les noms et versions des distributions Python visibles
+par l'interpréteur au moment de la capture. Elle trie le résultat par nom puis
+par version. Une distribution visible n'est pas forcément utilisée par le
+benchmark, et son inventaire ne décrit pas les bibliothèques système.
+
+---
+
+### `hash_file_sha256(path)` → `str`
+
+Cette fonction calcule une empreinte SHA-256 à partir des octets d'un fichier,
+en le lisant par morceaux. Elle retourne une chaîne hexadécimale de
+64 caractères. Deux fichiers dont les empreintes correspondent ont très
+probablement le même contenu ; une empreinte ne permet pas de retrouver le
+fichier si celui-ci a été perdu.
+
+Le benchmark enregistre les empreintes du fichier Parquet et de `uv.lock`.
+L'empreinte est calculée au moment de la capture : les fichiers ne doivent pas
+changer pendant l'exécution pour qu'elle décrive fidèlement les entrées
+utilisées. Une erreur de lecture est remontée à l'appelant.
+
+---
+
 ### **3️⃣ `capture_metadata()` → `ExecutionMetadata`**
 
 #### Enjeu
@@ -166,6 +192,12 @@ Cet exemple est illustratif : les valeurs varient selon l'exécution.
   },
   "config_file": "configs/benchmark_bike_validation.yaml",
   "config_content": "...",
+  "lockfile_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "installed_distributions": [
+    {"name": "numpy", "version": "2.5.4"},
+    {"name": "PyYAML", "version": "6.0.3"}
+  ],
+  "data_sha256": "937e2615694f54c2b2b1694b6f144c30880f6879d52ba9e3d8ffe9006d9d06b4",
   "data_file": "data/processed/bike_daily.parquet",
   "data_shape": {
     "n_rows": 43338,
@@ -178,7 +210,8 @@ Cet exemple est illustratif : les valeurs varient selon l'exécution.
 
 Le script utilise le même préfixe de nom pour les résultats et le JSON d'une
 exécution. Les chemins effectifs enregistrés par le script sont absolus ; ceux
-de l'exemple sont abrégés pour la lisibilité.
+de l'exemple sont abrégés pour la lisibilité. La liste de distributions et
+l'empreinte du fichier de verrouillage sont également illustratives.
 
 ---
 
@@ -187,12 +220,15 @@ de l'exemple sont abrégés pour la lisibilité.
 **En place :**
 - Le JSON est sauvegardé aux côtés des résultats et contient le contenu YAML,
   un commit abrégé, la branche, l'état Git et des statistiques sur les données.
-- La version de Python et celles de quelques distributions sont enregistrées.
+- Les empreintes SHA-256 des données et de `uv.lock`, la version de Python et
+  les distributions Python visibles sont enregistrées.
 
 **À compléter pour une meilleure reproductibilité :**
-- Identifier le contenu exact des données, par exemple avec une empreinte
-  SHA-256, et conserver ou retrouver le fichier correspondant.
-- Tracer l'environnement complet, notamment les dépendances et leur verrouillage.
+- Conserver ou retrouver les fichiers correspondant aux empreintes ; une
+  empreinte seule ne contient ni les données ni le fichier de verrouillage.
+- Tenir compte du système et des dépendances natives : l'inventaire Python et
+  l'empreinte de `uv.lock` ne décrivent pas tout l'environnement et ne prouvent
+  pas que les distributions installées correspondent au fichier verrouillé.
 - Pour un résultat de référence, utiliser un état de code committé et vérifier
   `git_dirty`, en tenant compte des fichiers ignorés.
 - Vérifier qu'une nouvelle exécution, avec les mêmes entrées et environnement,

@@ -1,11 +1,12 @@
 """Capture execution metadata for reproducibility and audit."""
 
+import hashlib
 import json
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distributions, version
 from pathlib import Path
 
 import polars as pl
@@ -23,6 +24,9 @@ class ExecutionMetadata:
     packages: dict[str, str]  # e.g., {"polars": "0.20.1", ...}
     config_file: str  # Path to YAML
     config_content: str  # Full YAML content
+    lockfile_sha256: str
+    installed_distributions: list[dict[str, str]]
+    data_sha256: str
     data_file: str  # Path to Parquet
     data_shape: dict[
         str, str | int
@@ -66,6 +70,20 @@ def get_package_versions(packages: list[str]) -> dict[str, str]:
     return versions
 
 
+def get_installed_distributions() -> list[dict[str, str]]:
+    """Return visible Python distributions and their versions."""
+    results = []
+
+    for distribution in distributions():
+        name = distribution.metadata.get("Name")
+        package_version = distribution.version
+        if not name or not package_version:
+            raise ValueError(f"Missing name or version: name={name!r}, version={package_version!r}")
+        results.append({"name": name, "version": package_version})
+    results.sort(key=lambda item: (item["name"].casefold(), item["version"]))
+    return results
+
+
 def capture_metadata(
     config_path: Path,
     data_path: Path,
@@ -76,12 +94,15 @@ def capture_metadata(
     config_content = config_path.read_text(encoding="utf-8")
     commit, branch = get_git_info(project_root)
     git_dirty = is_git_dirty(project_root)
-
+    lockfile = project_root / "uv.lock"
+    lockfile_sha256 = hash_file_sha256(lockfile)
     n_series = data.select("series_id").n_unique()
+    data_sha256 = hash_file_sha256(data_path)
     date_range = data.select(
         pl.col("timestamp").min().alias("start"),
         pl.col("timestamp").max().alias("end"),
     ).row(0)
+    installed_distributions = get_installed_distributions()
 
     return ExecutionMetadata(
         timestamp=datetime.now().isoformat(),
@@ -93,12 +114,15 @@ def capture_metadata(
         config_file=str(config_path),
         config_content=config_content,
         data_file=str(data_path),
+        lockfile_sha256=lockfile_sha256,
+        data_sha256=data_sha256,
         data_shape={
             "n_rows": data.height,
             "n_series": n_series,
             "date_range_start": date_range[0].isoformat(),
             "date_range_end": date_range[1].isoformat(),
         },
+        installed_distributions=installed_distributions,
     )
 
 
@@ -122,3 +146,17 @@ def is_git_dirty(project_root: Path) -> bool:
     )
 
     return bool(result.stdout.strip())
+
+
+def hash_file_sha256(path: Path) -> str:
+    """Return the SHA-256 hash of a file."""
+    digest = hashlib.sha256()
+
+    with path.open("rb") as file:
+        while True:
+            chunk = file.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+
+    return digest.hexdigest()
