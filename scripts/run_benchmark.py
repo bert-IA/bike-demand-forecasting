@@ -12,6 +12,7 @@ Usage:
     uv run python scripts/run_benchmark.py
 """
 
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -81,7 +82,7 @@ def main() -> None:
     print(f"Training start: {config_returned.validation.train_start}")
     print(f"Initial training days: {config_returned.validation.initial_train_days}")
     print(
-        f"Validation period: {config_returned.validation.first_cutoff} to {
+        f"Validation cutoffs: {config_returned.validation.first_cutoff} to {
             config_returned.validation.last_cutoff
         }"
     )
@@ -105,7 +106,7 @@ def main() -> None:
         print(f"  Mean WAPE: {mean_wape:.4f}")
         print(f"  Mean MASE: {mean_mase:.4f}")
         print(f"  Forecasts: {result.forecasts.height} observations")
-        print(f"  Complete horizons: {(result.evaluation['y_true'].is_not_null().sum())}")
+        print(f"  Evaluable forecast rows : {(result.evaluation['y_true'].is_not_null().sum())}")
 
     print()
     print("-" * 70)
@@ -128,6 +129,9 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(tempfile.mkdtemp(dir=output_dir, prefix=f"run-{timestamp}-"))
+
+    print(f"Results directory: {output_dir}")
 
     for model_name, result in results.items():
         safe_name = model_name.replace("/", "_").replace(" ", "_")

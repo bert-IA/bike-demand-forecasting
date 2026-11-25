@@ -208,10 +208,15 @@ Cet exemple est illustratif : les valeurs varient selon l'exécution.
 }
 ```
 
-Le script utilise le même préfixe de nom pour les résultats et le JSON d'une
-exécution. Les chemins effectifs enregistrés par le script sont absolus ; ceux
-de l'exemple sont abrégés pour la lisibilité. La liste de distributions et
-l'empreinte du fichier de verrouillage sont également illustratives.
+Le script crée un dossier distinct sous `data/results/` pour chaque exécution.
+Il y sauvegarde les prévisions, les scores et le JSON, avec un même préfixe
+horodaté dans leurs noms. Les chemins effectifs enregistrés par le script sont
+absolus ; ceux de l'exemple sont abrégés pour la lisibilité. La liste de
+distributions et l'empreinte du fichier de verrouillage sont également
+illustratives.
+
+Le dossier est créé avant l'écriture des fichiers : une erreur pendant la
+sauvegarde peut donc laisser un dossier incomplet.
 
 ---
 
