@@ -372,17 +372,9 @@ def run_models_benchmark(
 
 
 def run_benchmark(
-    config_path: Path,
-    project_root: Path,
+    benchmark_config: BenchmarkConfig,
+    data: pl.DataFrame,
     models: dict[str, Callable[[], ForecastModel]],
 ) -> tuple[BenchmarkConfig, dict[str, ModelBenchmarkResult]]:
-    """Load the configuration and data, then evaluate the models."""
-
-    config = load_benchmark_config(config_path)
-    benchmark_config = parse_benchmark_config(config)
-
-    data = load_benchmark_data(project_root, benchmark_config.input_path)
-
-    results = run_models_benchmark(data, benchmark_config.validation, models)
-
-    return benchmark_config, results
+    benchmark = run_models_benchmark(data, benchmark_config.validation, models)
+    return benchmark_config, benchmark
