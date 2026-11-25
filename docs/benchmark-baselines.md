@@ -48,3 +48,13 @@ for seasonal naive and 0.993 for last value, across 104 pairs with
   to be evaluated. No champion has been selected at this stage.
 - This summary reports an interactive exploration; a reproducible execution
   workflow remains to be formalized.
+
+## Exploratory Holt-Winters run
+
+A fourth model was evaluated with an additive damped trend and a
+seven-day additive seasonal cycle. Its optimizer allows up to 60,000
+function evaluations; a convergence warning still stops the benchmark.
+
+On the validation period, its mean MASE was 1.0948, compared with
+1.0935 for seasonal exponential smoothing without trend. These
+preliminary results do not designate a champion.

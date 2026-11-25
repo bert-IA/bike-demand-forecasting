@@ -5,7 +5,7 @@ Execute the bike demand forecasting benchmark with baseline models.
 This script:
 1. Loads the benchmark configuration from YAML
 2. Loads the processed bike daily data
-3. Runs the benchmark with three baseline models
+3. Runs the benchmark with four baseline models
 4. Displays results and saves them to Parquet files
 
 Usage:
@@ -26,6 +26,7 @@ from forecasting.evaluation.benchmark import (
 )
 from forecasting.evaluation.tracing import capture_metadata, save_metadata
 from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothing
+from forecasting.models.holt_winters import DampedHoltWinters
 from forecasting.models.last_value import LastValueNaive
 from forecasting.models.seasonal_naive import SeasonalNaive
 
@@ -49,6 +50,7 @@ def main() -> None:
         "last_value": LastValueNaive,
         "seasonal_naive_7": lambda: SeasonalNaive(season_length=7),
         "exponential_smoothing_7": lambda: SeasonalExponentialSmoothing(season_length=7),
+        "holt_winters_damped": lambda: DampedHoltWinters(season_length=7),
     }
 
     print("🤖 Models to benchmark:")

@@ -75,16 +75,21 @@ def test_runs_save_results_in_separate_directories(
 
     main()
     output = capsys.readouterr().out
-    assert output.count("Valid WAPE scores: 2/3") == 6
-    assert output.count("Valid MASE scores: 2/3") == 6
-    assert output.count("Valid RMSSE scores: 1/3") == 6
-    assert output.count("complete horizons : 1") == 6
+    assert output.count("Valid WAPE scores: 2/3") == 8
+    assert output.count("Valid MASE scores: 2/3") == 8
+    assert output.count("Valid RMSSE scores: 1/3") == 8
+    assert output.count("complete horizons : 1") == 8
     directories = list(results_dir.iterdir())
     assert len(directories) == 2
     assert all(directory.is_dir() for directory in directories)
     assert {file.name: file.read_bytes() for file in first_dir.iterdir()} == first_files
 
-    model_names = ["last_value", "seasonal_naive_7", "exponential_smoothing_7"]
+    model_names = [
+        "last_value",
+        "seasonal_naive_7",
+        "exponential_smoothing_7",
+        "holt_winters_damped",
+    ]
     expected_files = {"20260101_120000_metadata.json"}
     expected_files.update(
         f"20260101_120000_{model}_{kind}.parquet"
@@ -157,6 +162,7 @@ def test_missing_scores_skip_ranking_and_save_results(
         "last_value": make_result(None, None),
         "seasonal_naive_7": make_result(0.1, 0.2),
         "exponential_smoothing_7": make_result(0.2, 0.3),
+        "holt_winters_damped": make_result(0.15, 0.25),
     }
 
     monkeypatch.setitem(script_globals, "load_benchmark_config", lambda path: {})
@@ -180,4 +186,4 @@ def test_missing_scores_skip_ranking_and_save_results(
 
     directories = list((tmp_path / "data" / "results").iterdir())
     assert len(directories) == 1
-    assert len(list(directories[0].iterdir())) == 19
+    assert len(list(directories[0].iterdir())) == 25

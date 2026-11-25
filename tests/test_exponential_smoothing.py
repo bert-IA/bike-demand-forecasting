@@ -17,6 +17,7 @@ from forecasting.evaluation.backtest import (
 from forecasting.models.exponential_smoothing import (
     SeasonalExponentialSmoothing,
 )
+from forecasting.models.holt_winters import DampedHoltWinters
 
 
 def test_prediction_before_fit_is_rejected() -> None:
@@ -289,3 +290,80 @@ def test_backtest_propagates_convergence_failure(
             horizon=14,
             season_length=7,
         )
+
+
+def test_damped_holt_winters_matches_statsmodels() -> None:
+    days = np.arange(180, dtype=np.float64)
+    week = np.array([0, 10, 5, 8, 3, -10, -15], dtype=np.float64)
+    train = 100 + 0.1 * days + np.tile(week, 26)[:180]
+
+    model = DampedHoltWinters(season_length=7)
+    model.fit(train)
+    predictions = model.predict(horizon=14)
+
+    expected = (
+        ExponentialSmoothing(
+            train,
+            trend="add",
+            damped_trend=True,
+            seasonal="add",
+            seasonal_periods=7,
+            initialization_method="estimated",
+        )
+        .fit()
+        .forecast(14)
+    )
+
+    assert predictions.shape == (14,)
+    assert np.isfinite(predictions).all()
+    np.testing.assert_allclose(predictions, expected)
+
+
+def test_damped_holt_winters_runs_in_backtest() -> None:
+    start = datetime(2026, 1, 1)
+    cutoff = start + timedelta(days=179)
+    days = np.arange(180, dtype=np.float64)
+    week = np.array([0, 10, 5, 8, 3, -10, -15], dtype=np.float64)
+    train = 100 + 0.1 * days + np.tile(week, 26)[:180]
+
+    data = pl.DataFrame(
+        {
+            "series_id": ["A"] * 180,
+            "timestamp": [start + timedelta(days=day) for day in range(180)],
+            "y": train,
+        }
+    )
+
+    reports, forecasts, references = run_cutoff(
+        data,
+        cutoff,
+        lambda: DampedHoltWinters(season_length=7),
+        horizon=14,
+    )
+
+    assert reports["eligible"].item() is True
+    assert forecasts.height == 14
+    assert np.isfinite(forecasts["y_pred"].to_numpy()).all()
+    assert references.height == 1
+
+
+def test_damped_model_uses_higher_optimizer_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_fit(self: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(ExponentialSmoothing, "fit", fake_fit)
+
+    train = np.arange(28, dtype=np.float64) + 10
+
+    SeasonalExponentialSmoothing(season_length=7).fit(train)
+    DampedHoltWinters(season_length=7).fit(train)
+
+    assert calls == [
+        {},
+        {"minimize_kwargs": {"options": {"maxfun": 60000}}},
+    ]
