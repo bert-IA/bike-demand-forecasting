@@ -37,6 +37,7 @@ from forecasting.evaluation.benchmark import (
     validate_validation_window,
 )
 from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothing
+from forecasting.models.holt_winters import DampedHoltWinters
 from forecasting.models.last_value import LastValueNaive
 from forecasting.models.protocol import ForecastModel
 from forecasting.models.seasonal_naive import SeasonalNaive
@@ -769,6 +770,7 @@ def test_run_models_benchmark_with_baseline_models() -> None:
         "last_value": LastValueNaive,
         "seasonal_naive": lambda: SeasonalNaive(season_length=7),
         "exponential_smoothing": lambda: SeasonalExponentialSmoothing(season_length=7),
+        "holt_winters_damped": lambda: DampedHoltWinters(season_length=7),
     }
 
     results = run_models_benchmark(data, validation, models)
