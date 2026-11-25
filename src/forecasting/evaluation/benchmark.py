@@ -368,6 +368,18 @@ def run_models_benchmark(
     for name, factory in models.items():
         results[name] = run_model_benchmark(data, validation, factory)
 
+    evaluations: dict[str, pl.DataFrame] = {}
+    for name, result in results.items():
+        evaluations[name] = result.evaluation
+
+    validate_comparison_perimeter(evaluations)
+
+    references: dict[str, pl.DataFrame] = {}
+    for name, result in results.items():
+        references[name] = result.references
+
+    validate_comparison_references(references)
+
     return results
 
 
@@ -378,3 +390,54 @@ def run_benchmark(
 ) -> tuple[BenchmarkConfig, dict[str, ModelBenchmarkResult]]:
     benchmark = run_models_benchmark(data, benchmark_config.validation, models)
     return benchmark_config, benchmark
+
+
+def validate_comparison_perimeter(evaluations: dict[str, pl.DataFrame]) -> None:
+    """Require identical evaluation rows across models."""
+    keys = ["series_id", "cutoff", "timestamp"]
+    reference: pl.DataFrame | None = None
+
+    for model_name, evaluation in evaluations.items():
+        selected = evaluation.select(
+            *keys,
+            "y_true",
+            "is_evaluable",
+        )
+
+        if selected.select(keys).is_duplicated().any():
+            raise ValueError(f"Duplicate forecast keys for model {model_name!r}")
+
+        selected = selected.sort(keys)
+
+        if reference is None:
+            reference = selected
+        elif not reference.equals(selected):
+            raise ValueError(f"Evaluation perimeter differs for model {model_name!r}")
+
+
+def validate_comparison_references(
+    references: dict[str, pl.DataFrame],
+) -> None:
+    """Require identical seasonal references across models."""
+
+    keys = ["series_id", "cutoff"]
+    reference_table: pl.DataFrame | None = None
+
+    for model_name, model_references in references.items():
+        selected = model_references.select(
+            *keys,
+            "season_length",
+            "naive_mae",
+            "naive_mse",
+            "reference_status",
+        )
+
+        selected = selected.sort(keys)
+
+        if selected.select(keys).is_duplicated().any():
+            raise ValueError(f"Duplicate references keys for model {model_name!r}")
+
+        if reference_table is None:
+            reference_table = selected
+        elif not reference_table.equals(selected):
+            raise ValueError(f"References differ for model {model_name!r}")

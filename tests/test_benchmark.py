@@ -32,6 +32,8 @@ from forecasting.evaluation.benchmark import (
     run_model_benchmark,
     run_models_benchmark,
     run_validation_backtest,
+    validate_comparison_perimeter,
+    validate_comparison_references,
     validate_validation_window,
 )
 from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothing
@@ -820,3 +822,238 @@ def test_run_benchmark_loads_config_and_data(tmp_path: Path) -> None:
     assert config_returned.experiment_name == "test-benchmark"
     assert results["last_value"].wape_scores["wape"].item() == pytest.approx(0.84)
     assert results["last_value"].forecasts["y_pred"].item() == pytest.approx(8.0)
+
+
+@pytest.fixture
+def comparison_evaluation() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "series_id": ["A", "A"],
+            "cutoff": [datetime(2026, 3, 23)] * 2,
+            "timestamp": [datetime(2026, 3, 24), datetime(2026, 3, 25)],
+            "y_true": [10.0, None],
+            "is_evaluable": [True, False],
+            "y_pred": [9.0, 9.0],
+        }
+    )
+
+
+def test_comparison_accepts_different_order_and_predictions(
+    comparison_evaluation: pl.DataFrame,
+) -> None:
+    other = comparison_evaluation.reverse().with_columns(pl.lit(42.0).alias("y_pred"))
+
+    validate_comparison_perimeter({"first": comparison_evaluation, "second": other})
+
+
+def test_comparison_rejects_different_forecast_dates(
+    comparison_evaluation: pl.DataFrame,
+) -> None:
+    other = comparison_evaluation.with_columns(
+        (pl.col("timestamp") + pl.duration(days=1)).alias("timestamp")
+    )
+
+    with pytest.raises(ValueError):
+        validate_comparison_perimeter({"first": comparison_evaluation, "second": other})
+
+
+def test_comparison_rejects_different_actuals(
+    comparison_evaluation: pl.DataFrame,
+) -> None:
+    other = comparison_evaluation.with_columns(pl.lit(42.0).alias("y_true"))
+
+    with pytest.raises(ValueError):
+        validate_comparison_perimeter({"first": comparison_evaluation, "second": other})
+
+
+def test_comparison_rejects_duplicate_keys(
+    comparison_evaluation: pl.DataFrame,
+) -> None:
+    duplicate = pl.concat([comparison_evaluation, comparison_evaluation.head(1)])
+
+    with pytest.raises(ValueError):
+        validate_comparison_perimeter({"first": duplicate, "second": duplicate})
+
+
+def test_run_models_benchmark_rejects_different_perimeters(
+    monkeypatch: pytest.MonkeyPatch,
+    comparison_evaluation: pl.DataFrame,
+) -> None:
+    import forecasting.evaluation.benchmark as benchmark_module
+
+    config: dict[str, object] = {
+        "validation": {
+            "train_start": "2026-03-16",
+            "initial_train_days": 8,
+            "first_cutoff": "2026-03-23",
+            "last_cutoff": "2026-03-23",
+            "horizon_days": 1,
+            "step_days": 1,
+            "test_start": "2026-03-25",
+        }
+    }
+    validation = parse_validation_config(config)
+
+    different_evaluation = comparison_evaluation.with_columns(
+        (pl.col("timestamp") + pl.duration(days=1)).alias("timestamp")
+    )
+
+    def make_result(evaluation: pl.DataFrame) -> benchmark_module.ModelBenchmarkResult:
+        return benchmark_module.ModelBenchmarkResult(
+            reports=pl.DataFrame(),
+            forecasts=pl.DataFrame(),
+            references=pl.DataFrame(),
+            evaluation=evaluation,
+            wape_scores=pl.DataFrame(),
+            scaled_scores=pl.DataFrame(),
+        )
+
+    fake_results = iter(
+        [
+            make_result(comparison_evaluation),
+            make_result(different_evaluation),
+        ]
+    )
+
+    def fake_run_model_benchmark(
+        data: pl.DataFrame,
+        validation: benchmark_module.ValidationConfig,
+        model_factory: Callable[[], ForecastModel],
+    ) -> benchmark_module.ModelBenchmarkResult:
+        return next(fake_results)
+
+    monkeypatch.setattr(
+        benchmark_module,
+        "run_model_benchmark",
+        fake_run_model_benchmark,
+    )
+
+    models: dict[str, Callable[[], ForecastModel]] = {
+        "first": LastValueNaive,
+        "second": LastValueNaive,
+    }
+
+    with pytest.raises(ValueError, match="Evaluation perimeter differs.*second"):
+        run_models_benchmark(pl.DataFrame(), validation, models)
+
+
+@pytest.fixture
+def comparison_references() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "series_id": ["A", "B"],
+            "cutoff": [datetime(2026, 3, 23)] * 2,
+            "season_length": [7, 7],
+            "naive_mae": [10.0, 20.0],
+            "naive_mse": [120.0, 450.0],
+            "reference_status": ["ok", "ok"],
+        }
+    )
+
+
+def test_comparison_references_accepts_different_order(
+    comparison_references: pl.DataFrame,
+) -> None:
+    other = comparison_references.reverse()
+
+    validate_comparison_references({"first": comparison_references, "second": other})
+
+
+@pytest.mark.parametrize(
+    ("column", "different_value"),
+    [
+        ("season_length", 3),
+        ("naive_mae", 99.0),
+        ("naive_mse", 999.0),
+        ("reference_status", "zero_reference"),
+    ],
+)
+def test_comparison_references_rejects_different_values(
+    comparison_references: pl.DataFrame,
+    column: str,
+    different_value: int | float | str,
+) -> None:
+    other = comparison_references.with_columns(pl.lit(different_value).alias(column))
+
+    with pytest.raises(ValueError, match="References differ.*second"):
+        validate_comparison_references({"first": comparison_references, "second": other})
+
+
+def test_comparison_references_rejects_missing_key(
+    comparison_references: pl.DataFrame,
+) -> None:
+    other = comparison_references.head(1)
+
+    with pytest.raises(ValueError, match="References differ.*second"):
+        validate_comparison_references({"first": comparison_references, "second": other})
+
+
+def test_comparison_references_rejects_duplicate_keys(
+    comparison_references: pl.DataFrame,
+) -> None:
+    duplicate_row = comparison_references.head(1).with_columns(pl.lit(99.0).alias("naive_mae"))
+    other = pl.concat([comparison_references, duplicate_row])
+
+    with pytest.raises(ValueError, match="Duplicate references keys.*second"):
+        validate_comparison_references({"first": comparison_references, "second": other})
+
+
+def test_run_models_benchmark_rejects_different_references(
+    monkeypatch: pytest.MonkeyPatch,
+    comparison_evaluation: pl.DataFrame,
+    comparison_references: pl.DataFrame,
+) -> None:
+    import forecasting.evaluation.benchmark as benchmark_module
+
+    config: dict[str, object] = {
+        "validation": {
+            "train_start": "2026-03-16",
+            "initial_train_days": 8,
+            "first_cutoff": "2026-03-23",
+            "last_cutoff": "2026-03-23",
+            "horizon_days": 1,
+            "step_days": 1,
+            "test_start": "2026-03-25",
+        }
+    }
+    validation = parse_validation_config(config)
+
+    different_references = comparison_references.with_columns(pl.lit(99.0).alias("naive_mae"))
+
+    def make_result(references: pl.DataFrame) -> benchmark_module.ModelBenchmarkResult:
+        return benchmark_module.ModelBenchmarkResult(
+            reports=pl.DataFrame(),
+            forecasts=pl.DataFrame(),
+            references=references,
+            evaluation=comparison_evaluation,
+            wape_scores=pl.DataFrame(),
+            scaled_scores=pl.DataFrame(),
+        )
+
+    fake_results = iter(
+        [
+            make_result(comparison_references),
+            make_result(different_references),
+        ]
+    )
+
+    def fake_run_model_benchmark(
+        data: pl.DataFrame,
+        validation: benchmark_module.ValidationConfig,
+        model_factory: Callable[[], ForecastModel],
+    ) -> benchmark_module.ModelBenchmarkResult:
+        return next(fake_results)
+
+    monkeypatch.setattr(
+        benchmark_module,
+        "run_model_benchmark",
+        fake_run_model_benchmark,
+    )
+
+    models: dict[str, Callable[[], ForecastModel]] = {
+        "first": LastValueNaive,
+        "second": LastValueNaive,
+    }
+
+    with pytest.raises(ValueError, match="References differ.*second"):
+        run_models_benchmark(pl.DataFrame(), validation, models)

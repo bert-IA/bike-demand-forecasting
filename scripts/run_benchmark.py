@@ -16,6 +16,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import polars as pl
+
 from forecasting.evaluation.benchmark import (
     load_benchmark_config,
     load_benchmark_data,
@@ -95,32 +97,62 @@ def main() -> None:
     print("SCORES BY MODEL")
     print("-" * 70)
 
+    horizon = config_returned.validation.horizon_days
     for model_name, result in results.items():
         wape_scores = result.wape_scores
         scaled_scores = result.scaled_scores
+
+        complete_horizons = wape_scores.filter(
+            (pl.col("n_forecasts") == horizon) & (pl.col("n_evaluable") == horizon)
+        ).height
+
+        valid_wape = wape_scores["wape"].is_not_null().sum()
+        valid_mase = scaled_scores["mase"].is_not_null().sum()
+        valid_rmsse = scaled_scores["rmsse"].is_not_null().sum()
 
         mean_wape = wape_scores["wape"].mean()
         mean_mase = scaled_scores["mase"].mean()
 
         print(f"\n{model_name}:")
-        print(f"  Mean WAPE: {mean_wape:.4f}")
-        print(f"  Mean MASE: {mean_mase:.4f}")
+        print(f"  Valid WAPE scores: {valid_wape}/{wape_scores.height}")
+        print(f"  Valid MASE scores: {valid_mase}/{scaled_scores.height}")
+        print(f"  Valid RMSSE scores: {valid_rmsse}/{scaled_scores.height}")
+
+        if mean_wape is None:
+            print("  Mean WAPE: N/A (no valid scores)")
+        else:
+            print(f"  Mean WAPE: {mean_wape:.4f}")
+        if mean_mase is None:
+            print("  Mean MASE: N/A (no valid scores)")
+        else:
+            print(f"  Mean MASE: {mean_mase:.4f}")
+
         print(f"  Forecasts: {result.forecasts.height} observations")
         print(f"  Evaluable forecast rows : {(result.evaluation['y_true'].is_not_null().sum())}")
+        print(f"  complete horizons : {complete_horizons}")
 
     print()
     print("-" * 70)
     print("RANKING BY MEAN MASE (lower is better)")
     print("-" * 70)
 
-    rankings = []
+    rankings: list[tuple[str, float]] = []
+    unavailable_models: list[str] = []
     for model_name, result in results.items():
         mean_mase = result.scaled_scores["mase"].mean()
-        rankings.append((model_name, mean_mase))
 
-    rankings.sort(key=lambda x: x[1])
-    for rank, (model_name, mean_mase) in enumerate(rankings, 1):
-        print(f"{rank}. {model_name:30s} → MASE: {mean_mase:.4f}")
+        if mean_mase is None:
+            unavailable_models.append(model_name)
+        else:
+            rankings.append((model_name, mean_mase))
+
+    if unavailable_models:
+        print(f"unavailable models for ranking : {unavailable_models}")
+
+    else:
+        rankings.sort(key=lambda x: x[1])
+        for rank, (model_name, mean_mase) in enumerate(rankings, 1):
+            print(f"{rank}. {model_name:30s} → MASE: {mean_mase:.4f}")
 
     print()
 
@@ -140,13 +172,22 @@ def main() -> None:
         forecasts_path = output_dir / f"{timestamp}_{safe_name}_forecasts.parquet"
         wape_path = output_dir / f"{timestamp}_{safe_name}_wape.parquet"
         mase_path = output_dir / f"{timestamp}_{safe_name}_mase.parquet"
+        reports_path = output_dir / f"{timestamp}_{safe_name}_reports.parquet"
+        references_path = output_dir / f"{timestamp}_{safe_name}_references.parquet"
+        evaluation_path = output_dir / f"{timestamp}_{safe_name}_evaluation.parquet"
 
         result.forecasts.write_parquet(forecasts_path)
+        result.reports.write_parquet(reports_path)
+        result.references.write_parquet(references_path)
+        result.evaluation.write_parquet(evaluation_path)
         result.wape_scores.write_parquet(wape_path)
         result.scaled_scores.write_parquet(mase_path)
 
         print(f"💾 Saved {model_name}:")
         print(f"   - {forecasts_path.name}")
+        print(f"   - {reports_path.name}")
+        print(f"   - {references_path.name}")
+        print(f"   - {evaluation_path.name}")
         print(f"   - {wape_path.name}")
         print(f"   - {mase_path.name}")
 
