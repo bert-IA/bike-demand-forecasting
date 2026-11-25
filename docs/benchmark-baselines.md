@@ -58,3 +58,13 @@ function evaluations; a convergence warning still stops the benchmark.
 On the validation period, its mean MASE was 1.0948, compared with
 1.0935 for seasonal exponential smoothing without trend. These
 preliminary results do not designate a champion.
+
+## Exploratory SARIMA run
+
+SARIMA(1,0,0)(1,0,0,7) with a constant was evaluated without
+external variables. The optimizer allows up to 200 iterations;
+a convergence warning stops the benchmark.
+
+Mean MASE was 1.1317, compared with 1.0935 for seasonal exponential
+smoothing. Mean WAPE was 0.2702. These results are preliminary:
+the model configuration has not been tuned and no champion is selected.

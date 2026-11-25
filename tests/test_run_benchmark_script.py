@@ -1,5 +1,6 @@
 import json
 import runpy
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +8,21 @@ from types import SimpleNamespace
 
 import polars as pl
 import pytest
+
+from forecasting.evaluation.benchmark import SARIMAConfig
+from forecasting.models.protocol import ForecastModel
+from forecasting.models.sarima import SeasonalARIMA
+
+
+def test_mean_score_handles_missing_and_invalid_values() -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_benchmark.py"
+    mean_score = runpy.run_path(str(script_path))["_mean_score"]
+
+    assert mean_score(pl.Series("wape", [0.1, None, 0.3])) == pytest.approx(0.2)
+    assert mean_score(pl.Series("mase", [None], dtype=pl.Float64)) is None
+    assert mean_score(pl.Series("mase", [None])) is None
+    with pytest.raises(TypeError, match="must be numeric"):
+        mean_score(pl.Series("wape", ["invalid"]))
 
 
 def test_runs_save_results_in_separate_directories(
@@ -28,6 +44,7 @@ def test_runs_save_results_in_separate_directories(
 
     @dataclass
     class FakeMetadata:
+        model_configs: dict[str, dict[str, object]]
         marker: str = "test"
 
     config = SimpleNamespace(
@@ -56,17 +73,47 @@ def test_runs_save_results_in_separate_directories(
         ),
         scaled_scores=pl.DataFrame({"mase": [0.2, None, 0.3], "rmsse": [0.4, None, None]}),
     )
+    sarima_settings: dict[str, object] = {
+        "order": [0, 0, 1],
+        "seasonal_order": [0, 0, 1, 7],
+        "trend": "n",
+        "normalize": False,
+        "optimizer": "lbfgs",
+        "maxiter": 123,
+    }
 
-    monkeypatch.setitem(script_globals, "datetime", FixedClock)
-    monkeypatch.setitem(script_globals, "load_benchmark_config", lambda path: {})
-    monkeypatch.setitem(script_globals, "parse_benchmark_config", lambda raw: config)
-    monkeypatch.setitem(script_globals, "load_benchmark_data", lambda root, path: None)
-    monkeypatch.setitem(script_globals, "capture_metadata", lambda *args: FakeMetadata())
+    def fake_capture_metadata(
+        *args: object,
+        model_configs: dict[str, dict[str, object]],
+    ) -> FakeMetadata:
+        return FakeMetadata(model_configs=model_configs)
+
+    def fake_run_benchmark(
+        benchmark_config: object,
+        data: object,
+        models: dict[str, Callable[[], ForecastModel]],
+    ) -> tuple[object, dict[str, SimpleNamespace]]:
+        model = models["sarima"]()
+        assert isinstance(model, SeasonalARIMA)
+        assert model.order == (0, 0, 1)
+        assert model.seasonal_order == (0, 0, 1, 7)
+        assert model.trend == "n"
+        assert model.normalize is False
+        assert model.optimizer == "lbfgs"
+        assert model.maxiter == 123
+
+        return benchmark_config, {name: result for name in models}
+
     monkeypatch.setitem(
         script_globals,
-        "run_benchmark",
-        lambda config, data, models: (config, {name: result for name in models}),
+        "load_benchmark_config",
+        lambda path: {"models": {"sarima": sarima_settings}},
     )
+    monkeypatch.setitem(script_globals, "datetime", FixedClock)
+    monkeypatch.setitem(script_globals, "parse_benchmark_config", lambda raw: config)
+    monkeypatch.setitem(script_globals, "load_benchmark_data", lambda root, path: None)
+    monkeypatch.setitem(script_globals, "capture_metadata", fake_capture_metadata)
+    monkeypatch.setitem(script_globals, "run_benchmark", fake_run_benchmark)
 
     main()
     results_dir = tmp_path / "data" / "results"
@@ -88,7 +135,7 @@ def test_runs_save_results_in_separate_directories(
         "last_value",
         "seasonal_naive_7",
         "exponential_smoothing_7",
-        "holt_winters_damped",
+        "sarima",
     ]
     expected_files = {"20260101_120000_metadata.json"}
     expected_files.update(
@@ -100,6 +147,7 @@ def test_runs_save_results_in_separate_directories(
         assert {file.name for file in directory.iterdir()} == expected_files
         metadata = json.loads((directory / "20260101_120000_metadata.json").read_text())
         assert metadata["marker"] == "test"
+        assert metadata["model_configs"]["sarima"] == sarima_settings
         for model in model_names:
             for kind in ("reports", "references", "evaluation"):
                 path = directory / f"20260101_120000_{model}_{kind}.parquet"
@@ -162,13 +210,25 @@ def test_missing_scores_skip_ranking_and_save_results(
         "last_value": make_result(None, None),
         "seasonal_naive_7": make_result(0.1, 0.2),
         "exponential_smoothing_7": make_result(0.2, 0.3),
-        "holt_winters_damped": make_result(0.15, 0.25),
+        "sarima": make_result(0.15, 0.25),
     }
 
     monkeypatch.setitem(script_globals, "load_benchmark_config", lambda path: {})
     monkeypatch.setitem(script_globals, "parse_benchmark_config", lambda raw: config)
+    monkeypatch.setitem(
+        script_globals,
+        "parse_sarima_config",
+        lambda raw: SARIMAConfig(
+            order=(1, 0, 0),
+            seasonal_order=(1, 1, 1, 7),
+            trend="c",
+            normalize=True,
+            optimizer="powell",
+            maxiter=200,
+        ),
+    )
     monkeypatch.setitem(script_globals, "load_benchmark_data", lambda root, path: None)
-    monkeypatch.setitem(script_globals, "capture_metadata", lambda *args: FakeMetadata())
+    monkeypatch.setitem(script_globals, "capture_metadata", lambda *args, **kwargs: FakeMetadata())
     monkeypatch.setitem(
         script_globals,
         "run_benchmark",

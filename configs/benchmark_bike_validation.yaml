@@ -12,3 +12,12 @@ validation:
   horizon_days: 14
   step_days: 14
   test_start: "2026-09-22"
+
+models:
+  sarima:
+    order: [1, 0, 0]
+    seasonal_order: [1, 1, 1, 7]
+    trend: "c"
+    normalize: true
+    optimizer: "powell"
+    maxiter: 200

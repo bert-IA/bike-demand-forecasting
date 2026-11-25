@@ -441,3 +441,86 @@ def validate_comparison_references(
             reference_table = selected
         elif not reference_table.equals(selected):
             raise ValueError(f"References differ for model {model_name!r}")
+
+
+@dataclass(frozen=True)
+class SARIMAConfig:
+    order: tuple[int, int, int]
+    seasonal_order: tuple[int, int, int, int]
+    trend: str
+    normalize: bool
+    optimizer: str
+    maxiter: int
+
+
+def parse_sarima_config(config: dict[str, object]) -> SARIMAConfig:
+    """Parse and validate the SARIMA model settings."""
+    ...
+    if "models" not in config:
+        raise ValueError("section model is missing from configuration")
+
+    models = config.get("models")
+    if not isinstance(models, dict):
+        raise ValueError("models must be a mapping")
+
+    sarima = models.get("sarima")
+    if not isinstance(sarima, dict):
+        raise ValueError("models.sarima must be a mapping")
+
+    if not all(isinstance(key, str) for key in sarima):
+        raise ValueError("models.sarima keys must be strings")
+
+    def read_order(name: str, length: int) -> list[int]:
+        value = sarima.get(name)
+
+        if not isinstance(value, list) or len(value) != length:
+            raise ValueError(f"{name} must be a list of {length} non-negative integers")
+
+        result: list[int] = []
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                raise ValueError(f"{name} must contain non-negative integers")
+            result.append(item)
+
+        return result
+
+    order = read_order("order", 3)
+    seasonal = read_order("seasonal_order", 4)
+
+    period = seasonal[3]
+    if period == 1 or (period == 0 and any(seasonal[:3])):
+        raise ValueError("seasonal_order period must be at least 2 when seasonal terms are used")
+
+    trend = sarima.get("trend")
+    if not isinstance(trend, str) or trend not in ("n", "c", "t", "ct"):
+        raise ValueError("trend must be one of n, c, t, ct")
+
+    normalize = sarima.get("normalize")
+    if not isinstance(normalize, bool):
+        raise ValueError("normalize must be a boolean")
+
+    optimizer = sarima.get("optimizer")
+    optimizers = (
+        "newton",
+        "nm",
+        "bfgs",
+        "lbfgs",
+        "powell",
+        "cg",
+        "ncg",
+        "basinhopping",
+        "minimize",
+    )
+    if not isinstance(optimizer, str) or optimizer not in optimizers:
+        raise ValueError("optimizer must be a supported statsmodels method")
+
+    maxiter = get_positive_int(sarima, "maxiter")
+
+    return SARIMAConfig(
+        order=(order[0], order[1], order[2]),
+        seasonal_order=(seasonal[0], seasonal[1], seasonal[2], seasonal[3]),
+        trend=trend,
+        normalize=normalize,
+        optimizer=optimizer,
+        maxiter=maxiter,
+    )

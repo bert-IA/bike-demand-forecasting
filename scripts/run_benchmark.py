@@ -13,7 +13,10 @@ Usage:
 """
 
 import tempfile
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import polars as pl
@@ -22,13 +25,27 @@ from forecasting.evaluation.benchmark import (
     load_benchmark_config,
     load_benchmark_data,
     parse_benchmark_config,
+    parse_sarima_config,
     run_benchmark,
 )
 from forecasting.evaluation.tracing import capture_metadata, save_metadata
 from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothing
-from forecasting.models.holt_winters import DampedHoltWinters
 from forecasting.models.last_value import LastValueNaive
+from forecasting.models.protocol import ForecastModel
+from forecasting.models.sarima import SeasonalARIMA
 from forecasting.models.seasonal_naive import SeasonalNaive
+
+
+def _mean_score(scores: pl.Series) -> float | None:
+    if not scores.dtype.is_numeric() and scores.dtype != pl.Null:
+        raise TypeError(f"Score {scores.name!r} must be numeric, got {scores.dtype}")
+
+    mean = scores.mean()
+    if mean is None:
+        return None
+    if isinstance(mean, bool) or not isinstance(mean, int | float | Decimal):
+        raise TypeError(f"Score {scores.name!r} has a non-numeric mean: {type(mean).__name__}")
+    return float(mean)
 
 
 def main() -> None:
@@ -45,12 +62,25 @@ def main() -> None:
     print(f"📊 Project root: {project_root}")
     print()
 
+    config_load = load_benchmark_config(config_path)
+    benchmark_config = parse_benchmark_config(config_load)
+    sarima_config = parse_sarima_config(config_load)
+    data = load_benchmark_data(project_root, benchmark_config.input_path)
+
     # 2. Define baseline models
-    models = {
+    models: dict[str, Callable[[], ForecastModel]] = {
         "last_value": LastValueNaive,
         "seasonal_naive_7": lambda: SeasonalNaive(season_length=7),
         "exponential_smoothing_7": lambda: SeasonalExponentialSmoothing(season_length=7),
-        "holt_winters_damped": lambda: DampedHoltWinters(season_length=7),
+        "sarima": lambda: SeasonalARIMA(
+            order=sarima_config.order,
+            seasonal_order=sarima_config.seasonal_order,
+            trend=sarima_config.trend,
+            normalize=sarima_config.normalize,
+            optimizer=sarima_config.optimizer,
+            maxiter=sarima_config.maxiter,
+        ),
+        # "holt_winters_damped": lambda: DampedHoltWinters(season_length=7),
     }
 
     print("🤖 Models to benchmark:")
@@ -58,12 +88,12 @@ def main() -> None:
         print(f"   - {name}")
     print()
 
-    config_load = load_benchmark_config(config_path)
-    benchmark_config = parse_benchmark_config(config_load)
-    data = load_benchmark_data(project_root, benchmark_config.input_path)
-
     metadata = capture_metadata(
-        config_path, project_root / benchmark_config.input_path, data, project_root
+        config_path,
+        project_root / benchmark_config.input_path,
+        data,
+        project_root,
+        model_configs={"sarima": asdict(sarima_config)},
     )
 
     # 3. Run the benchmark
@@ -112,8 +142,8 @@ def main() -> None:
         valid_mase = scaled_scores["mase"].is_not_null().sum()
         valid_rmsse = scaled_scores["rmsse"].is_not_null().sum()
 
-        mean_wape = wape_scores["wape"].mean()
-        mean_mase = scaled_scores["mase"].mean()
+        mean_wape = _mean_score(wape_scores["wape"])
+        mean_mase = _mean_score(scaled_scores["mase"])
 
         print(f"\n{model_name}:")
         print(f"  Valid WAPE scores: {valid_wape}/{wape_scores.height}")
@@ -141,7 +171,7 @@ def main() -> None:
     rankings: list[tuple[str, float]] = []
     unavailable_models: list[str] = []
     for model_name, result in results.items():
-        mean_mase = result.scaled_scores["mase"].mean()
+        mean_mase = _mean_score(result.scaled_scores["mase"])
 
         if mean_mase is None:
             unavailable_models.append(model_name)
