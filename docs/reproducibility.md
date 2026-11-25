@@ -209,11 +209,25 @@ Cet exemple est illustratif : les valeurs varient selon l'exécution.
 ```
 
 Le script crée un dossier distinct sous `data/results/` pour chaque exécution.
-Il y sauvegarde les prévisions, les scores et le JSON, avec un même préfixe
-horodaté dans leurs noms. Les chemins effectifs enregistrés par le script sont
-absolus ; ceux de l'exemple sont abrégés pour la lisibilité. La liste de
-distributions et l'empreinte du fichier de verrouillage sont également
-illustratives.
+Il y sauvegarde six fichiers Parquet par modèle, ainsi qu'un fichier JSON de
+métadonnées. Leurs noms partagent un même préfixe horodaté :
+
+- `forecasts` : les prévisions produites ;
+- `reports` : l'éligibilité des séries à chaque coupure ;
+- `references` : les références saisonnières utilisées pour le MASE et le RMSSE ;
+- `evaluation` : les prévisions associées aux observations et leur indicateur
+  de disponibilité ;
+- `wape` : les scores WAPE et leurs statuts par série et coupure ;
+- `mase` : les scores MASE et RMSSE et leurs statuts par série et coupure.
+
+Avec trois modèles, une exécution réussie produit donc 19 fichiers. Avant
+la sauvegarde, le benchmark vérifie que les lignes d'évaluation et les
+références saisonnières sont identiques entre modèles. Ces contrôles ne
+prouvent pas à eux seuls que les données d'entraînement sont identiques.
+
+Les chemins effectifs enregistrés par le script sont absolus ; ceux de
+l'exemple sont abrégés pour la lisibilité. La liste de distributions et
+l'empreinte du fichier de verrouillage sont également illustratives.
 
 Le dossier est créé avant l'écriture des fichiers : une erreur pendant la
 sauvegarde peut donc laisser un dossier incomplet.
