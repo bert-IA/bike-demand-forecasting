@@ -15,7 +15,13 @@ Usage:
 from datetime import datetime
 from pathlib import Path
 
-from forecasting.evaluation.benchmark import run_benchmark
+from forecasting.evaluation.benchmark import (
+    load_benchmark_config,
+    load_benchmark_data,
+    parse_benchmark_config,
+    run_benchmark,
+)
+from forecasting.evaluation.tracing import capture_metadata, save_metadata
 from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothing
 from forecasting.models.last_value import LastValueNaive
 from forecasting.models.seasonal_naive import SeasonalNaive
@@ -47,11 +53,19 @@ def main() -> None:
         print(f"   - {name}")
     print()
 
+    config_load = load_benchmark_config(config_path)
+    benchmark_config = parse_benchmark_config(config_load)
+    data = load_benchmark_data(project_root, benchmark_config.input_path)
+
+    metadata = capture_metadata(
+        config_path, project_root / benchmark_config.input_path, data, project_root
+    )
+
     # 3. Run the benchmark
     print("⏳ Running benchmark...")
     start_time = datetime.now()
 
-    config, results = run_benchmark(config_path, project_root, models)
+    config_returned, results = run_benchmark(benchmark_config, data, models)
 
     elapsed = datetime.now() - start_time
     print(f"✅ Benchmark completed in {elapsed.total_seconds():.1f}s")
@@ -62,13 +76,17 @@ def main() -> None:
     print("BENCHMARK RESULTS")
     print("=" * 70)
     print()
-    print(f"Experiment: {config.experiment_name}")
-    print(f"Data: {config.input_path}")
-    print(f"Training start: {config.validation.train_start}")
-    print(f"Initial training days: {config.validation.initial_train_days}")
-    print(f"Validation period: {config.validation.first_cutoff} to {config.validation.last_cutoff}")
-    print(f"Forecast horizon: {config.validation.horizon_days} days")
-    print(f"Test period starts: {config.validation.test_start}")
+    print(f"Experiment: {config_returned.experiment_name}")
+    print(f"Data: {config_returned.input_path}")
+    print(f"Training start: {config_returned.validation.train_start}")
+    print(f"Initial training days: {config_returned.validation.initial_train_days}")
+    print(
+        f"Validation period: {config_returned.validation.first_cutoff} to {
+            config_returned.validation.last_cutoff
+        }"
+    )
+    print(f"Forecast horizon: {config_returned.validation.horizon_days} days")
+    print(f"Test period starts: {config_returned.validation.test_start}")
     print()
 
     # 5. Summary by model
@@ -127,6 +145,11 @@ def main() -> None:
         print(f"   - {forecasts_path.name}")
         print(f"   - {wape_path.name}")
         print(f"   - {mase_path.name}")
+
+    output_path = output_dir / f"{timestamp}_metadata.json"
+    save_metadata(metadata, output_path)  # ← pas d'assignation
+    print("💾 Saved execution metadata:")
+    print(f"   - {output_path.name}")
 
     print()
     print("=" * 70)

@@ -806,12 +806,17 @@ def test_run_benchmark_loads_config_and_data(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    config_load = load_benchmark_config(config_path)
+    config = parse_benchmark_config(config_load)
+
+    data = load_benchmark_data(tmp_path, config.input_path)
+
     models: dict[str, Callable[[], ForecastModel]] = {
         "last_value": LastValueNaive,
     }
 
-    config, results = run_benchmark(config_path, tmp_path, models)
+    config_returned, results = run_benchmark(config, data, models)
 
-    assert config.experiment_name == "test-benchmark"
-    assert results["last_value"].forecasts["y_pred"].item() == pytest.approx(8.0)
+    assert config_returned.experiment_name == "test-benchmark"
     assert results["last_value"].wape_scores["wape"].item() == pytest.approx(0.84)
+    assert results["last_value"].forecasts["y_pred"].item() == pytest.approx(8.0)
