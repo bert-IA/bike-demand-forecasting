@@ -27,6 +27,7 @@ from forecasting.evaluation.benchmark import (
     load_benchmark_config,
     load_benchmark_data,
     parse_benchmark_config,
+    parse_sarima_config,
     parse_validation_config,
     run_benchmark,
     run_model_benchmark,
@@ -40,6 +41,7 @@ from forecasting.models.exponential_smoothing import SeasonalExponentialSmoothin
 from forecasting.models.holt_winters import DampedHoltWinters
 from forecasting.models.last_value import LastValueNaive
 from forecasting.models.protocol import ForecastModel
+from forecasting.models.sarima import SeasonalARIMA
 from forecasting.models.seasonal_naive import SeasonalNaive
 
 
@@ -1059,3 +1061,114 @@ def test_run_models_benchmark_rejects_different_references(
 
     with pytest.raises(ValueError, match="References differ.*second"):
         run_models_benchmark(pl.DataFrame(), validation, models)
+
+
+def test_sarima_runs_with_other_models() -> None:
+    start = datetime(2026, 1, 1)
+    cutoff = start + timedelta(days=209)
+
+    config: dict[str, object] = {
+        "validation": {
+            "train_start": start.date().isoformat(),
+            "initial_train_days": 210,
+            "first_cutoff": cutoff.date().isoformat(),
+            "last_cutoff": cutoff.date().isoformat(),
+            "horizon_days": 1,
+            "step_days": 1,
+            "test_start": (cutoff + timedelta(days=2)).date().isoformat(),
+        }
+    }
+
+    rng = np.random.default_rng(42)
+    days = np.arange(211)
+    values = 100 + 10 * np.sin(2 * np.pi * days / 7) + rng.normal(0, 5, 211)
+
+    data = pl.DataFrame(
+        {
+            "series_id": ["A"] * 211,
+            "timestamp": [start + timedelta(days=day) for day in range(211)],
+            "y": values,
+        }
+    )
+
+    models: dict[str, Callable[[], ForecastModel]] = {
+        "last_value": LastValueNaive,
+        "seasonal_naive": lambda: SeasonalNaive(season_length=7),
+        "smoothing": lambda: SeasonalExponentialSmoothing(season_length=7),
+        "holt_winters": lambda: DampedHoltWinters(season_length=7),
+        "sarima": lambda: SeasonalARIMA(
+            seasonal_order=(1, 1, 1, 7),
+            normalize=True,
+        ),
+    }
+
+    results = run_models_benchmark(data, parse_validation_config(config), models)
+
+    assert set(results) == set(models)
+    for result in results.values():
+        assert result.forecasts.height == 1
+        assert result.forecasts["y_pred"].is_finite().all()
+        assert result.scaled_scores["mase_status"].item() == "ok"
+
+
+def test_parse_sarima_config_reads_yaml(tmp_path: Path) -> None:
+    config_file = tmp_path / "benchmark.yaml"
+    config_file.write_text(
+        """
+models:
+  sarima:
+    order: [1, 0, 0]
+    seasonal_order: [1, 1, 1, 7]
+    trend: "c"
+    normalize: true
+    optimizer: "powell"
+    maxiter: 200
+""",
+        encoding="utf-8",
+    )
+
+    config = load_benchmark_config(config_file)
+    result = parse_sarima_config(config)
+
+    assert result.order == (1, 0, 0)
+    assert result.seasonal_order == (1, 1, 1, 7)
+    assert result.trend == "c"
+    assert result.normalize is True
+    assert result.optimizer == "powell"
+    assert result.maxiter == 200
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("order", [1, 0]),
+        ("order", [-1, 0, 0]),
+        ("order", [True, 0, 0]),
+        ("seasonal_order", [1, 1, 1]),
+        ("seasonal_order", [1, 1, 1, 0]),
+        ("normalize", "true"),
+        ("optimizer", ""),
+        ("maxiter", 0),
+    ],
+)
+def test_parse_sarima_config_rejects_invalid_values(
+    key: str,
+    value: object,
+) -> None:
+    parameters: dict[str, object] = {
+        "order": [1, 0, 0],
+        "seasonal_order": [1, 1, 1, 7],
+        "trend": "c",
+        "normalize": True,
+        "optimizer": "powell",
+        "maxiter": 200,
+    }
+    parameters[key] = value
+
+    with pytest.raises(ValueError):
+        parse_sarima_config({"models": {"sarima": parameters}})
+
+
+def test_parse_sarima_config_requires_sarima_section() -> None:
+    with pytest.raises(ValueError):
+        parse_sarima_config({"models": {}})

@@ -24,6 +24,7 @@ class ExecutionMetadata:
     packages: dict[str, str]  # e.g., {"polars": "0.20.1", ...}
     config_file: str  # Path to YAML
     config_content: str  # Full YAML content
+    model_configs: dict[str, dict[str, object]]
     lockfile_sha256: str
     installed_distributions: list[dict[str, str]]
     data_sha256: str
@@ -89,6 +90,8 @@ def capture_metadata(
     data_path: Path,
     data: pl.DataFrame,
     project_root: Path,
+    *,
+    model_configs: dict[str, dict[str, object]],
 ) -> ExecutionMetadata:
     """Capture comprehensive execution metadata."""
     config_content = config_path.read_text(encoding="utf-8")
@@ -113,6 +116,7 @@ def capture_metadata(
         packages=get_package_versions(["polars", "statsmodels", "numpy", "PyYAML"]),
         config_file=str(config_path),
         config_content=config_content,
+        model_configs=model_configs,
         data_file=str(data_path),
         lockfile_sha256=lockfile_sha256,
         data_sha256=data_sha256,

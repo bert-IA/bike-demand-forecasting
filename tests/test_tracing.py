@@ -82,7 +82,24 @@ def test_capture_metadata_on_simple_data(
     lockfile = tmp_path / "uv.lock"
     lockfile.write_bytes(b"test lockfile")
 
-    metadata = capture_metadata(config_path, data_path, data, tmp_path)
+    model_configs = {
+        "sarima": {
+            "order": [1, 0, 0],
+            "seasonal_order": [1, 1, 1, 7],
+            "trend": "c",
+            "normalize": True,
+            "optimizer": "powell",
+            "maxiter": 200,
+        }
+    }
+
+    metadata = capture_metadata(
+        config_path,
+        data_path,
+        data,
+        tmp_path,
+        model_configs=model_configs,
+    )
 
     expected_lock_hash = hashlib.sha256(lockfile.read_bytes()).hexdigest()
     assert metadata.lockfile_sha256 == expected_lock_hash
@@ -98,6 +115,12 @@ def test_capture_metadata_on_simple_data(
     assert metadata.data_shape["date_range_start"] == "2026-01-01T00:00:00"
     assert metadata.data_shape["date_range_end"] == "2026-01-03T00:00:00"
 
+    output_path = tmp_path / "metadata.json"
+    save_metadata(metadata, output_path)
+
+    saved = json.loads(output_path.read_text())
+    assert saved["model_configs"] == model_configs
+
 
 def test_save_metadata_to_json(tmp_path: Path) -> None:
     """Should save metadata as valid JSON."""
@@ -110,6 +133,7 @@ def test_save_metadata_to_json(tmp_path: Path) -> None:
         packages={"polars": "0.20.1"},
         config_file="config.yaml",
         config_content="test: value\n",
+        model_configs={},
         lockfile_sha256="b" * 64,
         installed_distributions=[{"name": "example-package", "version": "1.2.3"}],
         data_file="data.parquet",
@@ -164,7 +188,7 @@ def test_capture_metadata_records_pyyaml_version(
 
     (tmp_path / "uv.lock").write_bytes(b"test lockfile")
 
-    metadata = capture_metadata(config_path, data_path, data, tmp_path)
+    metadata = capture_metadata(config_path, data_path, data, tmp_path, model_configs={})
 
     assert metadata.packages["PyYAML"] == version("PyYAML")
 
